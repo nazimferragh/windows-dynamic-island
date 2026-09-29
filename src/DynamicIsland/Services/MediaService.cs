@@ -55,7 +55,10 @@ public sealed class MediaService : IDisposable
     private BitmapSource? _art;
     private Color _accent = ColorExtractor.DefaultAccent;
 
-    public event Action<MediaSnapshot?>? Changed;
+    private bool _publishedOnce;
+
+    /// <summary>Raised with the new snapshot and whether a different track just started.</summary>
+    public event Action<MediaSnapshot?, bool>? Changed;
 
     public MediaSnapshot? Current { get; private set; }
 
@@ -217,8 +220,12 @@ public sealed class MediaService : IDisposable
 
     private void Publish(MediaSnapshot? snapshot)
     {
+        var previous = Current;
+        // Whatever was already playing when the app started doesn't count as "new".
+        bool isNewTrack = snapshot != null && (previous == null ? _publishedOnce : previous.TrackKey != snapshot.TrackKey);
+        _publishedOnce = true;
         Current = snapshot;
-        Changed?.Invoke(snapshot);
+        Changed?.Invoke(snapshot, isNewTrack);
     }
 
     private static async Task<BitmapSource?> LoadThumbnailAsync(IRandomAccessStreamReference? reference)

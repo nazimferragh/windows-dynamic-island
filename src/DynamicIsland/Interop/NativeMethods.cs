@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DynamicIsland.Interop;
 
@@ -14,10 +15,25 @@ internal static class NativeMethods
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOACTIVATE = 0x0010;
 
-    // SHQueryUserNotificationState results that mean "something is fullscreen".
-    private const int QUNS_BUSY = 2;
     private const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
     private const int QUNS_PRESENTATION_MODE = 4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SYSTEM_POWER_STATUS
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public int BatteryLifeTime;
+        public int BatteryFullLifeTime;
+    }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
@@ -29,8 +45,26 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
     [DllImport("shell32.dll")]
     private static extern int SHQueryUserNotificationState(out int state);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
 
     /// <summary>Hide from Alt+Tab and never steal focus from the app the user is working in.</summary>
     public static void MakeOverlayWindow(IntPtr hwnd)
@@ -40,12 +74,38 @@ internal static class NativeMethods
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
     }
 
+    public static void PlaceTopmost(IntPtr hwnd, int x, int y, int width, int height) =>
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+
     public static void BringToTopmost(IntPtr hwnd) =>
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
-    public static bool IsFullscreenAppActive()
+    /// <summary>Exclusive-fullscreen games and presentation mode (affects every monitor).</summary>
+    public static bool IsExclusiveFullscreenOrPresenting()
     {
         if (SHQueryUserNotificationState(out int state) != 0) return false;
-        return state is QUNS_BUSY or QUNS_RUNNING_D3D_FULL_SCREEN or QUNS_PRESENTATION_MODE;
+        return state is QUNS_RUNNING_D3D_FULL_SCREEN or QUNS_PRESENTATION_MODE;
+    }
+
+    /// <summary>True when the focused window covers this whole monitor (fullscreen video, borderless game…).</summary>
+    public static bool IsFullscreenWindowOn(int left, int top, int width, int height)
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero || IsZoomed(hwnd)) return false;
+
+        var className = new StringBuilder(64);
+        GetClassName(hwnd, className, className.Capacity);
+        if (className.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return false;
+
+        if (!GetWindowRect(hwnd, out var r)) return false;
+        return r.Left <= left && r.Top <= top && r.Right >= left + width && r.Bottom >= top + height;
+    }
+
+    /// <summary>Battery percent and charging state, or null on machines without a battery.</summary>
+    public static (int Percent, bool Charging)? GetBattery()
+    {
+        if (!GetSystemPowerStatus(out var s)) return null;
+        bool noBattery = (s.BatteryFlag & 128) != 0 || s.BatteryFlag == 255 || s.BatteryLifePercent > 100;
+        return noBattery ? null : (s.BatteryLifePercent, s.ACLineStatus == 1);
     }
 }

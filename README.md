@@ -6,15 +6,15 @@ A Dynamic Island for Windows that sits at the top of your screen and looks like 
 
 ## What it does today
 
-- **Pill at the top-center** of the screen. It stays on top, doesn't take focus from your apps, and doesn't show in Alt+Tab or the taskbar.
-- **Spring animations.** The pill changes size with a small bounce, and the content fades and scales in after it.
+- **macOS-style notch** at the top-center of **every monitor**. It's attached to the top edge, with flared top corners and rounded bottom corners, and each one is sized for its monitor's scaling.
+- **Spring animations.** The notch grows and shrinks with a small bounce. Content follows it in with a soft blur, fade and scale.
+- **Behaves like part of Windows.** It always starts with Windows and has no Quit button (the tray menu only hides it). It restarts itself after a crash, never takes focus, and doesn't show in Alt+Tab or the taskbar.
 - **Now Playing from any app.** It reads the Windows media controls, so it works with Spotify, YouTube in any browser, Media Player, VLC and others.
-  - Compact view: album art and animated bars tinted with a color taken from the artwork.
-  - Hover to expand: title, artist, source app, a progress bar, and previous / play-pause / next.
-  - When a new song starts, the island opens for a few seconds, like on iPhone.
-- **Clock and date** when nothing is playing.
-- **Hides during fullscreen** games, videos and presentations.
-- **Tray icon:** hide/show, start with Windows, open the log folder, quit.
+  - Closed: album art on the left and animated bars on the right, tinted with a color taken from the artwork.
+  - Sneak peek: when a new song starts, the notch drops down briefly to show the title and artist.
+  - Hover or click to open: large artwork, title, artist, a progress bar, and filled previous / play-pause / next controls.
+- **Week calendar** with today highlighted, and **battery** status on laptops.
+- **Hides on a monitor while an app is fullscreen on it** (videos, games, presentations).
 
 ## Install
 
@@ -35,15 +35,14 @@ To release a version, push a tag such as `v0.1.0`. GitHub Actions builds the ins
 
 ```
 src/DynamicIsland/
-  App.xaml(.cs)          startup, single instance, tray icon
-  IslandWindow.xaml(.cs) the island: layout, spring animation, states
+  App.xaml(.cs)          startup, single instance, one island per monitor, tray, crash restart
+  IslandWindow.xaml(.cs) the notch: shape geometry, spring animation, states, player, calendar
   Controls/Equalizer.cs  the animated "now playing" bars
   Services/
     MediaService.cs      Windows media session watcher and controls
     ColorExtractor.cs    accent color from album art
-    StartupManager.cs    "start with Windows"
     Log.cs               %LOCALAPPDATA%\DynamicIsland\log.txt
-  Interop/NativeMethods.cs  Win32: overlay window style, topmost, fullscreen detection
+  Interop/NativeMethods.cs  Win32: overlay window style, placement, fullscreen detection, battery
 installer/DynamicIsland.iss Inno Setup script
 scripts/make-icon.ps1       regenerates assets/icon.ico
 ```
@@ -56,6 +55,6 @@ scripts/make-icon.ps1       regenerates assets/icon.ico
 - Calendar: next meeting, with a one-click join
 - Downloads, file copy progress, battery and charging
 - Drag-and-drop file shelf
-- Multi-monitor support, themes, settings UI
+- Themes and a settings UI
 - Auto-update
 - Code signing (so Smart App Control and SmartScreen don't block the installer)
