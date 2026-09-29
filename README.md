@@ -13,6 +13,9 @@ A Dynamic Island for Windows that sits at the top of your screen and looks like 
   - Closed: album art on the left and animated bars on the right, tinted with a color taken from the artwork.
   - Sneak peek: when a new song starts, the notch drops down briefly to show the title and artist.
   - Hover or click to open: large artwork, title, artist, a progress bar, and filled previous / play-pause / next controls.
+- **Black hole for your windows.** Drag any window by its title bar toward the notch and it starts to glow. Hold it over the notch until it says "Release to absorb", then let go, and the window is pulled inside. It disappears from the screen, the taskbar and Alt+Tab, but the app keeps running. You can also press **Ctrl+Alt+Z** to throw the active window in.
+  - Hover the island to see the absorbed windows as cards. **Click** a card to bring its window back where it was, or **drag the card out** to put the window wherever you drop it.
+  - Safety net: absorbed windows come back if the island exits or crashes, and any window left hidden by an earlier run is restored at startup.
 - **Week calendar** with today highlighted, and **battery** status on laptops.
 - **Hides on a monitor while an app is fullscreen on it** (videos, games, presentations).
 
@@ -41,8 +44,12 @@ src/DynamicIsland/
   Services/
     MediaService.cs      Windows media session watcher and controls
     ColorExtractor.cs    accent color from album art
+    WindowDragWatcher.cs notices windows being dragged (for the black hole)
+    WindowVault.cs       absorbed windows: hide, restore, snapshots, crash-safe state
     Log.cs               %LOCALAPPDATA%\DynamicIsland\log.txt
+  Overlays/                 the absorb animation and the drag-out ghost card
   Interop/NativeMethods.cs  Win32: overlay window style, placement, fullscreen detection, battery
+  Interop/WindowApi.cs      Win32: inspecting, capturing, hiding and restoring other windows
 installer/DynamicIsland.iss Inno Setup script
 scripts/make-icon.ps1       regenerates assets/icon.ico
 ```

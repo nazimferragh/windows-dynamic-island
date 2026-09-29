@@ -5,7 +5,9 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
+using DynamicIsland.Interop;
 using DynamicIsland.Services;
 using Microsoft.Win32;
 using Drawing = System.Drawing;
@@ -25,8 +27,15 @@ public partial class App : Application
     private Mutex? _mutex;
     private bool _ownsMutex;
     private bool _afterCrash;
+    private const int AbsorbHotkeyId = 0xB1;
+    private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000, VK_Z = 0x5A;
+    private const int WM_HOTKEY = 0x0312;
+
     private Forms.NotifyIcon? _tray;
     private MediaService? _media;
+    private WindowVault? _vault;
+    private WindowDragWatcher? _dragWatcher;
+    private HwndSource? _hotkeySink;
     private bool _hidden;
 
     public static string VersionText
@@ -63,9 +72,16 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += OnFatalException;
         Log.Info($"Starting Dynamic Island {VersionText}{(_afterCrash ? " (restarted after crash)" : "")}");
 
+        // Any windows a previous run left hidden (crash, forced kill) come back first.
+        WindowVault.RecoverOrphans();
+        _vault = new WindowVault();
+        _dragWatcher = new WindowDragWatcher();
+        SessionEnding += (_, _) => _vault.RestoreAll();
+
         _media = new MediaService();
         CreateIslands();
         CreateTrayIcon();
+        RegisterAbsorbHotkey();
 
         _displayChangeDebounce.Tick += (_, _) =>
         {
@@ -80,6 +96,13 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _vault?.RestoreAll();
+        _dragWatcher?.Dispose();
+        if (_hotkeySink != null)
+        {
+            WindowApi.UnregisterHotKey(_hotkeySink.Handle, AbsorbHotkeyId);
+            _hotkeySink.Dispose();
+        }
         if (_tray != null)
         {
             _tray.Visible = false;
@@ -100,7 +123,7 @@ public partial class App : Application
         foreach (var screen in Forms.Screen.AllScreens)
         {
             var b = screen.Bounds;
-            var island = new IslandWindow(_media!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
+            var island = new IslandWindow(_media!, _vault!, _dragWatcher!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
             if (!_hidden) island.Show();
             _islands.Add(island);
         }
@@ -113,6 +136,35 @@ public partial class App : Application
             _displayChangeDebounce.Stop();
             _displayChangeDebounce.Start();
         });
+
+    /// <summary>Ctrl+Alt+Z throws the active window into the island on its monitor.</summary>
+    private void RegisterAbsorbHotkey()
+    {
+        _hotkeySink = new HwndSource(new HwndSourceParameters("DynamicIslandHotkeys") { ParentWindow = new IntPtr(-3) /* message-only */ });
+        _hotkeySink.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+        {
+            if (msg == WM_HOTKEY && wParam.ToInt32() == AbsorbHotkeyId)
+            {
+                AbsorbForegroundWindow();
+                handled = true;
+            }
+            return IntPtr.Zero;
+        });
+        if (!WindowApi.RegisterHotKey(_hotkeySink.Handle, AbsorbHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_Z))
+            Log.Info("Ctrl+Alt+Z is already used by another app; the absorb shortcut is disabled");
+    }
+
+    private void AbsorbForegroundWindow()
+    {
+        var hwnd = WindowApi.GetForegroundWindow();
+        if (!WindowVault.CanAbsorb(hwnd) || _hidden) return;
+        var r = WindowApi.GetVisibleBounds(hwnd);
+        int cx = r.Left + r.Width / 2, cy = r.Top + r.Height / 2;
+        var island = _islands.FirstOrDefault(i =>
+            cx >= i.Monitor.X && cx < i.Monitor.X + i.Monitor.Width && cy >= i.Monitor.Y && cy < i.Monitor.Y + i.Monitor.Height)
+            ?? _islands.FirstOrDefault();
+        island?.AbsorbWindow(hwnd, null);
+    }
 
     private void SetHidden(bool hidden)
     {
@@ -162,6 +214,16 @@ public partial class App : Application
     private void OnFatalException(object sender, UnhandledExceptionEventArgs e)
     {
         Log.Error("Fatal exception", e.ExceptionObject as Exception);
+
+        // Never leave absorbed windows stranded.
+        try
+        {
+            _vault?.RestoreAll();
+        }
+        catch
+        {
+            // The next start recovers them from vault.json anyway.
+        }
 
         // Behave like part of Windows: come back on our own, unless we're crashing right after a restart.
         bool crashLoop = _afterCrash && DateTime.Now - _startedAt < TimeSpan.FromSeconds(30);

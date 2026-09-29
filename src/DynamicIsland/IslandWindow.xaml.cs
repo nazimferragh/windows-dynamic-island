@@ -11,6 +11,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using DynamicIsland.Interop;
+using DynamicIsland.Overlays;
 using DynamicIsland.Services;
 
 namespace DynamicIsland;
@@ -18,10 +19,11 @@ namespace DynamicIsland;
 /// <summary>
 /// One island, pinned to the top-center of one monitor, styled after the macOS notch:
 /// flush with the top edge, flared top corners, rounded bottom corners.
+/// It also acts as a black hole: drag a window into it and it's absorbed; pull it back out later.
 /// </summary>
 public partial class IslandWindow : Window
 {
-    private enum State { Closed, Peek, Open }
+    private enum State { Closed, Peek, Open, Attract }
 
     /// <summary>Body width/height, flare radius of the top corners, radius of the bottom corners.</summary>
     private readonly record struct Silhouette(double Width, double Height, double Flare, double Radius);
@@ -30,10 +32,26 @@ public partial class IslandWindow : Window
     private static readonly Silhouette ClosedIdleHoverShape = new(204, 35, 6, 11);
     private static readonly Silhouette ClosedMediaShape = new(290, 32, 6, 10);
     private static readonly Silhouette ClosedMediaHoverShape = new(304, 35, 6, 11);
+    private static readonly Silhouette ClosedVaultShape = new(250, 32, 6, 10);
+    private static readonly Silhouette ClosedVaultHoverShape = new(264, 35, 6, 11);
     private static readonly Silhouette PeekShape = new(290, 58, 8, 18);
     private static readonly Silhouette OpenShape = new(640, 186, 14, 32);
+    private static readonly Silhouette OpenShelfShape = new(640, 316, 14, 32);
+    private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
+
+    // Where a dragged window is pulled in / captured, in DIPs relative to the notch's top-center.
+    // The capture zone is deliberately small and needs a short hold: the top of the screen is
+    // busy (browser tab strips, drag-to-maximize), and a window must never be swallowed by accident.
+    private const double AttractRadius = 320;
+    private const double CaptureHalfWidth = 170;
+    private const double CaptureDepth = 64;
+    private static readonly TimeSpan ArmDelay = TimeSpan.FromMilliseconds(450);
+
+    private static readonly Color HoleGlow = Color.FromRgb(150, 90, 255);
 
     private readonly MediaService _media;
+    private readonly WindowVault _vault;
+    private readonly WindowDragWatcher _dragWatcher;
     private readonly Int32Rect _monitor; // physical pixels
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
     private readonly DropShadowEffect _shadow = new() { Color = Colors.Black, BlurRadius = 30, ShadowDepth = 6, Direction = 270, Opacity = 0, RenderingBias = RenderingBias.Performance };
@@ -60,10 +78,24 @@ public partial class IslandWindow : Window
     private bool _fullscreenHidden;
     private DateTime _calendarDate;
 
-    public IslandWindow(MediaService media, Int32Rect monitorBounds)
+    // Black hole: a window being dragged toward us.
+    private double _attraction; // 0..1
+    private DateTime? _zoneEnteredAt;
+    private bool _inZone;
+    private bool _capture; // armed: releasing now absorbs the window
+    private bool _spinning;
+
+    // Black hole: pulling a window back out of the shelf.
+    private AbsorbedWindow? _pressedItem;
+    private WindowApi.POINT _pressPoint;
+    private DragGhost? _ghost;
+
+    public IslandWindow(MediaService media, WindowVault vault, WindowDragWatcher dragWatcher, Int32Rect monitorBounds)
     {
         InitializeComponent();
         _media = media;
+        _vault = vault;
+        _dragWatcher = dragWatcher;
         _monitor = monitorBounds;
 
         ClosedEq.BarBrush = _accentBrush;
@@ -80,20 +112,34 @@ public partial class IslandWindow : Window
         _watchdogTimer.Tick += (_, _) => Watchdog();
 
         _media.Changed += OnMediaChanged;
+        _vault.Changed += OnVaultChanged;
+        _dragWatcher.Moved += OnWindowDragMoved;
+        _dragWatcher.Ended += OnWindowDragEnded;
         Closed += (_, _) =>
         {
             _media.Changed -= OnMediaChanged;
+            _vault.Changed -= OnVaultChanged;
+            _dragWatcher.Moved -= OnWindowDragMoved;
+            _dragWatcher.Ended -= OnWindowDragEnded;
             _tickTimer.Stop();
             _watchdogTimer.Stop();
+            _ghost?.Close();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
         SourceInitialized += OnSourceInitialized;
+        MouseMove += OnWindowMouseMove;
+        MouseLeftButtonUp += OnWindowMouseLeftButtonUp;
+        LostMouseCapture += (_, _) => EndShelfDrag(cancelled: true);
 
         Notch.Height = Height;
         ShowSnapshot(media.Current);
+        RebuildShelf();
         UpdateCalendar();
         ApplyState(animate: false);
     }
+
+    /// <summary>This island's monitor, in physical pixels.</summary>
+    public Int32Rect Monitor => _monitor;
 
     public bool UserHidden
     {
@@ -122,6 +168,8 @@ public partial class IslandWindow : Window
         PositionOnMonitor();
     }
 
+    private double DpiScale => _hwnd == IntPtr.Zero ? 1 : VisualTreeHelper.GetDpi(this).DpiScaleX;
+
     /// <summary>Placed in physical pixels so it lands correctly on monitors with different scaling.</summary>
     private void PositionOnMonitor()
     {
@@ -133,6 +181,16 @@ public partial class IslandWindow : Window
         NativeMethods.PlaceTopmost(_hwnd, x, _monitor.Y, w, h);
     }
 
+    private bool IsOnMyMonitor(int x, int y) =>
+        x >= _monitor.X && x < _monitor.X + _monitor.Width && y >= _monitor.Y && y < _monitor.Y + _monitor.Height;
+
+    /// <summary>A physical screen point relative to the notch's top-center, in DIPs.</summary>
+    private (double Dx, double Dy) FromNotch(int x, int y)
+    {
+        double s = DpiScale;
+        return ((x - (_monitor.X + _monitor.Width / 2.0)) / s, (y - _monitor.Y) / s);
+    }
+
     // ---------------------------------------------------------------- state
 
     private void SetState(State state)
@@ -142,16 +200,31 @@ public partial class IslandWindow : Window
         ApplyState(animate: true);
     }
 
+    private Silhouette CurrentSilhouette()
+    {
+        bool hasMedia = _snapshot != null;
+        bool hasVault = _vault.Items.Count > 0;
+        switch (_state)
+        {
+            case State.Open:
+                return hasVault ? OpenShelfShape : OpenShape;
+            case State.Attract:
+                if (_capture) return CaptureShape;
+                double a = _attraction;
+                return new Silhouette(250 + 150 * a, 36 + 26 * a, 7 + 4 * a, 12 + 10 * a);
+            case State.Peek when hasMedia:
+                return PeekShape;
+        }
+        if (hasMedia) return _hovered ? ClosedMediaHoverShape : ClosedMediaShape;
+        if (hasVault) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
+        return _hovered ? ClosedIdleHoverShape : ClosedIdleShape;
+    }
+
     private void ApplyState(bool animate)
     {
         bool hasMedia = _snapshot != null;
-        var shape = _state switch
-        {
-            State.Open => OpenShape,
-            State.Peek when hasMedia => PeekShape,
-            _ when hasMedia => _hovered ? ClosedMediaHoverShape : ClosedMediaShape,
-            _ => _hovered ? ClosedIdleHoverShape : ClosedIdleShape,
-        };
+        bool closed = _state is State.Closed or State.Peek;
+        var shape = CurrentSilhouette();
 
         _width.Target = shape.Width;
         _height.Target = shape.Height;
@@ -170,13 +243,17 @@ public partial class IslandWindow : Window
             RenderShape();
         }
 
-        Reveal(ClosedMedia, _state != State.Open && hasMedia, animate);
+        Reveal(ClosedMedia, closed && hasMedia, animate);
         Reveal(PeekText, _state == State.Peek && hasMedia, animate);
+        Reveal(ClosedVault, closed && !hasMedia && _vault.Items.Count > 0, animate);
+        Reveal(BlackHoleContent, _state == State.Attract, animate);
         Reveal(OpenContent, _state == State.Open, animate);
 
         bool playing = _snapshot?.IsPlaying == true;
-        ClosedEq.IsPlaying = playing && _state != State.Open;
+        ClosedEq.IsPlaying = playing && closed;
         OpenEq.IsPlaying = playing && _state == State.Open;
+        SetHoleSpinning(_state == State.Attract);
+        HoleText.Text = _capture ? "Release to absorb" : _inZone ? "Hold to absorb…" : "Drag here to absorb";
 
         if (_state == State.Open)
         {
@@ -279,7 +356,21 @@ public partial class IslandWindow : Window
         NotchShape.Data = geometry;
         NotchContent.Clip = geometry;
 
-        // The drop shadow grows in as the notch opens and disappears when it's closed.
+        if (_state == State.Attract)
+        {
+            // A purple glow around the event horizon while a window is being pulled in.
+            _shadow.Color = HoleGlow;
+            _shadow.ShadowDepth = 0;
+            _shadow.BlurRadius = 40;
+            _shadow.Opacity = _capture ? 0.95 : 0.35 + 0.5 * _attraction;
+            NotchShape.Effect ??= _shadow;
+            return;
+        }
+
+        // Otherwise a regular drop shadow that grows in as the notch opens.
+        _shadow.Color = Colors.Black;
+        _shadow.ShadowDepth = 6;
+        _shadow.BlurRadius = 30;
         double openness = Math.Clamp((h - ClosedIdleShape.Height) / (OpenShape.Height - ClosedIdleShape.Height), 0, 1);
         if (openness < 0.02)
         {
@@ -320,6 +411,272 @@ public partial class IslandWindow : Window
         return geometry;
     }
 
+    // ---------------------------------------------------------------- black hole: absorbing
+
+    private void OnWindowDragMoved(WindowDrag drag)
+    {
+        if (!drag.IsMove || !IsVisible || !IsOnMyMonitor(drag.CursorX, drag.CursorY) || !WindowVault.CanAbsorb(drag.Hwnd))
+        {
+            ExitAttract();
+            return;
+        }
+
+        bool inZone = IsInCaptureZone(drag.CursorX, drag.CursorY);
+        var (dx, dy) = FromNotch(drag.CursorX, drag.CursorY);
+        double attraction = inZone ? 1 : Math.Clamp(1 - Math.Sqrt(dx * dx + dy * dy) / AttractRadius, 0, 1);
+        if (!inZone && attraction <= 0)
+        {
+            ExitAttract();
+            return;
+        }
+
+        // Only arm after the window has been held over the notch for a moment.
+        _zoneEnteredAt = inZone ? _zoneEnteredAt ?? DateTime.UtcNow : null;
+        bool armed = inZone && DateTime.UtcNow - _zoneEnteredAt >= ArmDelay;
+        if (armed && !_capture) _height.Kick(160); // a little "got it" bump
+
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _peekTimer.Stop();
+        _inZone = inZone;
+        _capture = armed;
+        _attraction = attraction;
+        _state = State.Attract;
+        ApplyState(animate: true);
+    }
+
+    private void OnWindowDragEnded(WindowDrag drag)
+    {
+        bool armed = _state == State.Attract && _capture;
+        ExitAttract();
+        if (armed && drag.IsMove && IsInCaptureZone(drag.CursorX, drag.CursorY))
+            AbsorbWindow(drag.Hwnd, drag.StartPlacement);
+    }
+
+    private bool IsInCaptureZone(int x, int y)
+    {
+        if (!IsOnMyMonitor(x, y)) return false;
+        var (dx, dy) = FromNotch(x, y);
+        return Math.Abs(dx) < CaptureHalfWidth && dy < CaptureDepth;
+    }
+
+    private void ExitAttract()
+    {
+        _zoneEnteredAt = null;
+        if (_state != State.Attract) return;
+        _inZone = false;
+        _capture = false;
+        _attraction = 0;
+        _state = State.Closed;
+        ApplyState(animate: true);
+    }
+
+    /// <summary>Swallows a window into this island with the black hole animation.</summary>
+    public void AbsorbWindow(IntPtr hwnd, WindowApi.WINDOWPLACEMENT? restorePlacement)
+    {
+        var item = _vault.Prepare(hwnd, restorePlacement);
+        if (item == null)
+        {
+            Wobble();
+            return;
+        }
+
+        var rect = WindowApi.GetVisibleBounds(hwnd);
+        double s = DpiScale;
+        var target = new Point(_monitor.X + _monitor.Width / 2.0, _monitor.Y + 18 * s);
+        var animation = new AbsorbAnimation(item.Snapshot, rect, target, s);
+
+        // Hide the real window only once the overlay is on screen, so there's no flicker.
+        animation.ContentRendered += (_, _) =>
+        {
+            if (!_vault.Commit(item))
+            {
+                animation.Close();
+                Wobble();
+                return;
+            }
+            animation.Play();
+        };
+        animation.Finished += Gulp;
+        animation.Show();
+    }
+
+    /// <summary>The notch bounces a little when something falls in.</summary>
+    private void Gulp()
+    {
+        _height.Kick(260);
+        _width.Kick(380);
+        StartShapeAnimation();
+    }
+
+    /// <summary>A quick squish to say "can't do that" (e.g. admin windows).</summary>
+    private void Wobble()
+    {
+        _width.Kick(-900);
+        StartShapeAnimation();
+    }
+
+    private void SetHoleSpinning(bool spin)
+    {
+        if (_spinning == spin) return;
+        _spinning = spin;
+        HoleSpin.BeginAnimation(RotateTransform.AngleProperty, spin
+            ? new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.1)) { RepeatBehavior = RepeatBehavior.Forever }
+            : null);
+    }
+
+    // ---------------------------------------------------------------- black hole: shelf
+
+    private void OnVaultChanged()
+    {
+        RebuildShelf();
+        ApplyState(animate: IsLoaded);
+    }
+
+    private void RebuildShelf()
+    {
+        int count = _vault.Items.Count;
+        ClosedVaultCount.Text = count.ToString(CultureInfo.CurrentCulture);
+        ShelfCount.Text = count == 1 ? "1 window" : $"{count} windows";
+
+        ShelfPanel.Children.Clear();
+        foreach (var item in _vault.Items) ShelfPanel.Children.Add(CreateCard(item));
+    }
+
+    private FrameworkElement CreateCard(AbsorbedWindow item)
+    {
+        var thumbnail = new Border
+        {
+            Width = 124,
+            Height = 64,
+            CornerRadius = new CornerRadius(9),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(34, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Background = item.Snapshot != null
+                ? new ImageBrush(item.Snapshot) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top }
+                : (Brush)FindResource("ArtPlaceholder"),
+        };
+
+        var titleRow = new DockPanel { Margin = new Thickness(1, 6, 0, 0), LastChildFill = true };
+        if (item.Icon != null)
+        {
+            var icon = new Image { Source = item.Icon, Width = 14, Height = 14, Margin = new Thickness(0, 0, 5, 0) };
+            DockPanel.SetDock(icon, Dock.Left);
+            titleRow.Children.Add(icon);
+        }
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = item.Title,
+            FontSize = 11,
+            Foreground = Brushes.White,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var scale = new ScaleTransform(1, 1);
+        var card = new StackPanel
+        {
+            Width = 124,
+            Margin = new Thickness(0, 0, 12, 0),
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Tag = item,
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = scale,
+            Children = { thumbnail, titleRow },
+        };
+        card.MouseEnter += (_, _) => AnimateScale(scale, 1.05);
+        card.MouseLeave += (_, _) => AnimateScale(scale, 1);
+        card.MouseLeftButtonDown += Card_MouseLeftButtonDown;
+        return card;
+    }
+
+    private static void AnimateScale(ScaleTransform scale, double to)
+    {
+        var animation = new DoubleAnimation(to, TimeSpan.FromMilliseconds(160)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
+    }
+
+    private void Card_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: AbsorbedWindow item }) return;
+        _pressedItem = item;
+        WindowApi.GetCursorPos(out _pressPoint);
+        // Capture on the window itself, so the drag survives the notch closing underneath it.
+        CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnWindowMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_pressedItem == null) return;
+        WindowApi.GetCursorPos(out var cursor);
+
+        if (_ghost == null)
+        {
+            double moved = Math.Sqrt(Math.Pow(cursor.X - _pressPoint.X, 2) + Math.Pow(cursor.Y - _pressPoint.Y, 2));
+            if (moved < 8 * DpiScale) return;
+            _ghost = new DragGhost(_pressedItem.Snapshot, _pressedItem.Icon, _pressedItem.Title);
+            _ghost.Show();
+        }
+        _ghost.MoveTo(cursor.X, cursor.Y);
+
+        // Once the window is dragged out of the island, the island closes behind it.
+        if (_state == State.Open && !IsInsideOpenNotch(cursor.X, cursor.Y))
+        {
+            _openTimer.Stop();
+            _closeTimer.Stop();
+            SetState(State.Closed);
+        }
+    }
+
+    private void OnWindowMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_pressedItem == null) return;
+        EndShelfDrag(cancelled: false);
+    }
+
+    private void EndShelfDrag(bool cancelled)
+    {
+        var item = _pressedItem;
+        if (item == null) return;
+        _pressedItem = null;
+        bool dragged = _ghost != null;
+        _ghost?.Close();
+        _ghost = null;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (cancelled) return;
+
+        WindowApi.GetCursorPos(out var cursor);
+        if (!dragged)
+        {
+            _vault.Restore(item); // plain click: back to where it was
+        }
+        else if (IsOnMyMonitor(cursor.X, cursor.Y) && IsInsideOpenNotch(cursor.X, cursor.Y) && _state == State.Open)
+        {
+            return; // dropped back onto the island: keep it inside
+        }
+        else
+        {
+            _vault.RestoreAt(item, cursor.X, cursor.Y);
+        }
+        _hovered = false;
+        SetState(State.Closed);
+    }
+
+    private bool IsInsideOpenNotch(int x, int y)
+    {
+        var (dx, dy) = FromNotch(x, y);
+        return Math.Abs(dx) < OpenShelfShape.Width / 2 && dy < _height.Value;
+    }
+
+    private void ShelfScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        ShelfScroll.ScrollToHorizontalOffset(ShelfScroll.HorizontalOffset - e.Delta / 2.0);
+        e.Handled = true;
+    }
+
     // ---------------------------------------------------------------- media
 
     private void OnMediaChanged(MediaSnapshot? snapshot, bool isNewTrack)
@@ -356,7 +713,7 @@ public partial class IslandWindow : Window
         TitleText.Text = snapshot.Title;
         ArtistText.Text = snapshot.Artist;
         SourceText.Text = snapshot.Source;
-        PeekText.Text = string.IsNullOrEmpty(snapshot.Artist) ? snapshot.Title : $"{snapshot.Title}  Â·  {snapshot.Artist}";
+        PeekText.Text = string.IsNullOrEmpty(snapshot.Artist) ? snapshot.Title : $"{snapshot.Title}  ·  {snapshot.Artist}";
         OpenEq.Visibility = Visibility.Visible;
         ProgressRow.Visibility = snapshot.Duration > TimeSpan.Zero ? Visibility.Visible : Visibility.Collapsed;
         Transport.IsEnabled = true;
@@ -511,6 +868,7 @@ public partial class IslandWindow : Window
 
     private void Notch_MouseEnter(object sender, MouseEventArgs e)
     {
+        if (_pressedItem != null || _state == State.Attract) return;
         _closeTimer.Stop();
         _peekTimer.Stop();
         _hovered = true;
@@ -523,6 +881,7 @@ public partial class IslandWindow : Window
 
     private void Notch_MouseLeave(object sender, MouseEventArgs e)
     {
+        if (_pressedItem != null || _state == State.Attract) return;
         _openTimer.Stop();
         _hovered = false;
         if (_state == State.Closed) ApplyState(animate: true);
@@ -531,7 +890,7 @@ public partial class IslandWindow : Window
 
     private void Notch_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (_state == State.Open) return;
+        if (_state is State.Open or State.Attract) return;
         _openTimer.Stop();
         SetState(State.Open);
     }
@@ -542,7 +901,7 @@ public partial class IslandWindow : Window
 
     // ---------------------------------------------------------------- helpers
 
-    /// <summary>A damped spring (response â‰ˆ 0.4 s, damping â‰ˆ 0.8): quick, with a small organic overshoot.</summary>
+    /// <summary>A damped spring (response ≈ 0.4 s, damping ≈ 0.8): quick, with a small organic overshoot.</summary>
     private sealed class Spring
     {
         private const double Stiffness = 240;
@@ -563,6 +922,9 @@ public partial class IslandWindow : Window
             Velocity += force * dt;
             Value += Velocity * dt;
         }
+
+        /// <summary>Adds a burst of velocity (bounce) without changing the target.</summary>
+        public void Kick(double velocity) => Velocity += velocity;
 
         public bool TrySettle()
         {

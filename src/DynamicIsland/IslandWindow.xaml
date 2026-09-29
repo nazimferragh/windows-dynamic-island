@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:DynamicIsland.Controls"
         Title="Dynamic Island"
-        Width="760" Height="250"
+        Width="760" Height="370"
         WindowStartupLocation="Manual"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False"
@@ -55,6 +55,13 @@
             </Setter>
         </Style>
 
+        <!-- The black hole's colors, matching the app icon. -->
+        <LinearGradientBrush x:Key="HoleRingBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#FFBF5AF2" Offset="0" />
+            <GradientStop Color="#FF5E5CE6" Offset="0.5" />
+            <GradientStop Color="#005E5CE6" Offset="1" />
+        </LinearGradientBrush>
+
         <Style x:Key="OneLine" TargetType="TextBlock">
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="TextWrapping" Value="NoWrap" />
@@ -85,16 +92,67 @@
                        Style="{StaticResource OneLine}" TextAlignment="Center" FontSize="12" Foreground="White"
                        Opacity="0" IsHitTestVisible="False" />
 
+            <!-- Closed, windows waiting inside the black hole. -->
+            <Grid x:Name="ClosedVault" Width="250" Height="32" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <Ellipse Width="12" Height="12" StrokeThickness="2.2" Stroke="{StaticResource HoleRingBrush}"
+                         HorizontalAlignment="Left" VerticalAlignment="Center" Margin="17,0,0,0" />
+                <TextBlock x:Name="ClosedVaultCount" Foreground="White" FontSize="12" FontWeight="SemiBold"
+                           HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,18,0" />
+            </Grid>
+
+            <!-- A window is being dragged toward the island. -->
+            <Grid x:Name="BlackHoleContent" Width="440" Height="96" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,6,0,0">
+                    <Grid Width="28" Height="28">
+                        <Ellipse Width="14" Height="14" Fill="Black" />
+                        <Ellipse StrokeThickness="2.5" Stroke="{StaticResource HoleRingBrush}" RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="HoleSpin" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                    </Grid>
+                    <TextBlock x:Name="HoleText" Text="Drop to absorb" Foreground="White" FontSize="13" FontWeight="SemiBold"
+                               Margin="10,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Text="It'll wait here. Hover the island to get it back." Foreground="{StaticResource TertiaryText}"
+                           FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0" />
+            </Grid>
+
             <!-- Open. -->
-            <Grid x:Name="OpenContent" Width="640" Height="186" VerticalAlignment="Top" HorizontalAlignment="Center"
+            <!-- The shelf row sits below the notch's normal open height, so it's only revealed
+                 (the notch grows taller) when windows are inside. -->
+            <Grid x:Name="OpenContent" Width="640" Height="316" VerticalAlignment="Top" HorizontalAlignment="Center"
                   Opacity="0" IsHitTestVisible="False" RenderTransformOrigin="0.5,0">
                 <Grid.RenderTransform>
                     <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
                 </Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="38" />
-                    <RowDefinition Height="*" />
+                    <RowDefinition Height="148" />
+                    <RowDefinition Height="130" />
                 </Grid.RowDefinitions>
+
+                <!-- Black hole shelf -->
+                <Grid Grid.Row="2" Margin="26,0,26,18">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="24" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border Height="1" Background="#14FFFFFF" VerticalAlignment="Top" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,6">
+                        <Ellipse Width="10" Height="10" StrokeThickness="2" Stroke="{StaticResource HoleRingBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Black hole" FontSize="11" FontWeight="SemiBold" Foreground="White" Margin="7,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="ShelfCount" FontSize="11" Foreground="{StaticResource TertiaryText}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="Click to restore · drag out to place" FontSize="10" Foreground="{StaticResource TertiaryText}"
+                               HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,7" />
+                    <ScrollViewer x:Name="ShelfScroll" Grid.Row="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                                  PreviewMouseWheel="ShelfScroll_PreviewMouseWheel">
+                        <StackPanel x:Name="ShelfPanel" Orientation="Horizontal" />
+                    </ScrollViewer>
+                </Grid>
 
                 <!-- Header: source app on the left, battery on the right (the middle is "the notch"). -->
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="30,4,0,0">
