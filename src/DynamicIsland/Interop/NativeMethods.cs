@@ -9,6 +9,7 @@ internal static class NativeMethods
     private const int GWL_EXSTYLE = -20;
     private const long WS_EX_TOOLWINDOW = 0x00000080;
     private const long WS_EX_NOACTIVATE = 0x08000000;
+    private const long WS_EX_APPWINDOW = 0x00040000;
 
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private const uint SWP_NOSIZE = 0x0001;
@@ -66,11 +67,15 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
 
-    /// <summary>Hide from Alt+Tab and never steal focus from the app the user is working in.</summary>
+    /// <summary>
+    /// Hide from Alt+Tab and the taskbar, never steal focus, and don't get tied to one virtual desktop.
+    /// WPF adds WS_EX_APPWINDOW for ShowInTaskbar=true, which makes Windows treat it as a regular app
+    /// window (taskbar button, single desktop), so it's removed here before the window is first shown.
+    /// </summary>
     public static void MakeOverlayWindow(IntPtr hwnd)
     {
         long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
-        style |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        style = (style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW;
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
     }
 

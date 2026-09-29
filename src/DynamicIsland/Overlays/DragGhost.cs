@@ -23,7 +23,7 @@ internal sealed class DragGhost : Window
         AllowsTransparency = true;
         Background = Brushes.Transparent;
         ResizeMode = ResizeMode.NoResize;
-        ShowInTaskbar = false;
+        ShowInTaskbar = true; // no hidden owner, so it appears on the current virtual desktop; the tool-window style hides the button
         ShowActivated = false;
         Topmost = true;
         Width = CardWidth + 40;

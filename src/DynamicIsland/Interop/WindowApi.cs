@@ -84,6 +84,33 @@ public static class WindowApi
     private static readonly IntPtr HWND_TOP = IntPtr.Zero;
 
     public delegate void WinEventProc(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+    private const int DWMWA_CLOAKED = 14;
+
+    /// <summary>
+    /// True when a maximized window is shown on this monitor (on the current virtual desktop:
+    /// windows on other desktops are "cloaked").
+    /// </summary>
+    public static bool HasMaximizedWindowOn(RECT monitor)
+    {
+        bool found = false;
+        uint self = (uint)Environment.ProcessId;
+        EnumWindows((hwnd, _) =>
+        {
+            if (!IsWindowVisible(hwnd) || !IsZoomed(hwnd) || IsIconic(hwnd)) return true;
+            if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (GetProcessId(hwnd) == self || !GetWindowRect(hwnd, out var r)) return true;
+            if (!monitor.Contains(r.Left + r.Width / 2, r.Top + r.Height / 2)) return true;
+            found = true;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
 
     [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmod, WinEventProc proc, uint idProcess, uint idThread, uint flags);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool UnhookWinEvent(IntPtr hook);
@@ -155,7 +182,7 @@ public static class WindowApi
     /// <summary>The rectangle you actually see (without the invisible resize borders).</summary>
     public static RECT GetVisibleBounds(IntPtr hwnd)
     {
-        if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out var rect, Marshal.SizeOf<RECT>()) == 0) return rect;
+        if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT rect, Marshal.SizeOf<RECT>()) == 0) return rect;
         GetWindowRect(hwnd, out rect);
         return rect;
     }
@@ -201,11 +228,15 @@ public static class WindowApi
         BringWindowToTop(hwnd);
     }
 
-    /// <summary>Lets mouse input fall through a window (used by our animation/ghost overlays).</summary>
+    /// <summary>
+    /// Lets mouse input fall through one of our overlay windows, and keeps it out of the taskbar and
+    /// off any single virtual desktop (WS_EX_APPWINDOW, added by WPF, is removed).
+    /// </summary>
     public static void MakeClickThrough(IntPtr hwnd)
     {
         long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
-        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | 0x08000000 /* NOACTIVATE */));
+        style = (style | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | 0x08000000 /* NOACTIVATE */) & ~0x00040000L /* APPWINDOW */;
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
     }
 
     public static void PlaceTopmost(IntPtr hwnd, int x, int y, int width, int height) =>

@@ -74,6 +74,7 @@ public partial class App : Application
 
         // Any windows a previous run left hidden (crash, forced kill) come back first.
         WindowVault.RecoverOrphans();
+        ShellTweaks.DisableSnapBarOnDragToTop();
         _vault = new WindowVault();
         _dragWatcher = new WindowDragWatcher();
         SessionEnding += (_, _) => _vault.RestoreAll();
@@ -215,10 +216,11 @@ public partial class App : Application
     {
         Log.Error("Fatal exception", e.ExceptionObject as Exception);
 
-        // Never leave absorbed windows stranded.
+        // Never leave absorbed windows stranded, or the top strip reserved.
         try
         {
             _vault?.RestoreAll();
+            foreach (var island in _islands) island.ReleaseReservedSpace();
         }
         catch
         {

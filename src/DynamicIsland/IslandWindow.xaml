@@ -6,7 +6,7 @@
         Width="760" Height="370"
         WindowStartupLocation="Manual"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
-        ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False"
+        ResizeMode="NoResize" ShowInTaskbar="True" Topmost="True" ShowActivated="False"
         FontFamily="Segoe UI Variable Text, Segoe UI"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
 

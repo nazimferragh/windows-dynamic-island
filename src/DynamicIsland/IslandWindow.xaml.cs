@@ -53,6 +53,7 @@ public partial class IslandWindow : Window
     private readonly WindowVault _vault;
     private readonly WindowDragWatcher _dragWatcher;
     private readonly Int32Rect _monitor; // physical pixels
+    private readonly MenuBarStrip _strip;
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
     private readonly DropShadowEffect _shadow = new() { Color = Colors.Black, BlurRadius = 30, ShadowDepth = 6, Direction = 270, Opacity = 0, RenderingBias = RenderingBias.Performance };
 
@@ -68,7 +69,7 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _closeTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private readonly DispatcherTimer _peekTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _tickTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
-    private readonly DispatcherTimer _watchdogTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
+    private readonly DispatcherTimer _watchdogTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     private IntPtr _hwnd;
     private MediaSnapshot? _snapshot;
@@ -98,6 +99,21 @@ public partial class IslandWindow : Window
         _dragWatcher = dragWatcher;
         _monitor = monitorBounds;
 
+        // The menu-bar strip goes up first so the island always stacks above it.
+        _strip = new MenuBarStrip(monitorBounds);
+        _strip.FullscreenAppChanged += () =>
+        {
+            Watchdog();
+            // The fullscreen window may still be settling into its final size; check again shortly.
+            Dispatcher.InvokeAsync(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(400);
+                Watchdog();
+            });
+        };
+        _strip.Show();
+        _strip.Reserve();
+
         ClosedEq.BarBrush = _accentBrush;
         OpenEq.BarBrush = _accentBrush;
 
@@ -124,6 +140,7 @@ public partial class IslandWindow : Window
             _tickTimer.Stop();
             _watchdogTimer.Stop();
             _ghost?.Close();
+            _strip.Close();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
         SourceInitialized += OnSourceInitialized;
@@ -860,9 +877,24 @@ public partial class IslandWindow : Window
     private void UpdateVisibility()
     {
         bool show = !_userHidden && !_fullscreenHidden;
-        if (show && !IsVisible) Show();
-        else if (!show && IsVisible) Hide();
+        if (show)
+        {
+            if (!_strip.IsVisible) _strip.Show();
+            if (!IsVisible) Show();
+        }
+        else
+        {
+            if (IsVisible) Hide();
+            if (_strip.IsVisible) _strip.Hide();
+        }
+
+        // Fullscreen apps ignore the reserved strip anyway; only give the space back when the user hides the island.
+        if (_userHidden) _strip.Release();
+        else _strip.Reserve();
     }
+
+    /// <summary>Gives the reserved top strip back to other windows (on exit or crash).</summary>
+    public void ReleaseReservedSpace() => _strip.Release();
 
     // ---------------------------------------------------------------- input
 

@@ -17,7 +17,9 @@ A Dynamic Island for Windows that sits at the top of your screen and looks like 
   - Hover the island to see the absorbed windows as cards. **Click** a card to bring its window back where it was, or **drag the card out** to put the window wherever you drop it.
   - Safety net: absorbed windows come back if the island exits or crashes, and any window left hidden by an earlier run is restored at startup.
 - **Week calendar** with today highlighted, and **battery** status on laptops.
-- **Hides on a monitor while an app is fullscreen on it** (videos, games, presentations).
+- **A menu bar like the Mac's.** A thin strip at the top of each screen is reserved, the same way the taskbar reserves its space, so maximized apps sit below the island instead of under it. While an app is maximized, the strip turns black and the notch blends into it.
+- **On every virtual desktop**, and it **hides on a monitor while an app is fullscreen on it** (videos, games, presentations).
+- Windows 11's "snap layouts" bar, which drops down right where the island is when you drag a window to the top, is turned off once. Snap layouts still work from the maximize button and Win+Z.
 
 ## Install
 
