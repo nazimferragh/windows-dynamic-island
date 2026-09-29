@@ -1,8 +1,8 @@
-; Inno Setup script for Dynamic Island.
+﻿; Inno Setup script for Dynamic Island.
 ; Built by build.ps1, which passes /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 
 #define AppName "Dynamic Island"

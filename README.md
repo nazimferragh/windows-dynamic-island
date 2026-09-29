@@ -2,7 +2,7 @@
 
 A Dynamic Island for Windows that sits at the top of your screen and looks like it came with the OS. It stays small until something is going on, then grows to show it.
 
-> **Status:** v0.1 prototype. The base is in place; the features that go further than Apple's island come next.
+> **Status:** early preview (v0.3). The base and the black hole work; more features that go further than Apple's island are coming.
 
 ## What it does today
 
@@ -36,7 +36,23 @@ dotnet run --project src/DynamicIsland      # run it
 .\build.ps1                                 # build dist\DynamicIsland-Setup-<version>.exe
 ```
 
-To release a version, push a tag such as `v0.1.0`. GitHub Actions builds the installer and attaches it to a GitHub Release.
+To release a version, push a tag such as `v0.3.0`. GitHub Actions builds the installer, signs it (see below) and attaches it to a GitHub Release.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Release builds are made only by the [GitHub Actions workflow](.github/workflows/release.yml) from the source code in this repository. Both the app (`DynamicIsland.exe`) and the installer are signed.
+- Committers and reviewers: [@nazimferragh](https://github.com/nazimferragh)
+- Approvers: [@nazimferragh](https://github.com/nazimferragh)
+
+## Privacy
+
+This program does not send any information to other networked systems. It has no network features at all. Everything it knows (the media that's playing, which windows are in the black hole, its log file in `%LOCALAPPDATA%\DynamicIsland`) stays on your PC.
+
+## License
+
+[MIT](LICENSE)
 
 ## Project layout
 
@@ -68,4 +84,3 @@ scripts/make-icon.ps1       regenerates assets/icon.ico
 - Drag-and-drop file shelf
 - Themes and a settings UI
 - Auto-update
-- Code signing (so Smart App Control and SmartScreen don't block the installer)

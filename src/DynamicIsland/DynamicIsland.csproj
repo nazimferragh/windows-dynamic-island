@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -16,11 +16,11 @@
     <!-- WFO0003 targets WinForms apps; this is a WPF app that only borrows NotifyIcon. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
 
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Product>Dynamic Island</Product>
     <Company>Nazim Ferragh</Company>
     <Description>A Dynamic Island for Windows.</Description>
-    <Copyright>Copyright © 2026 Nazim Ferragh</Copyright>
+    <Copyright>Copyright (c) 2026 Nazim Ferragh. MIT License.</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

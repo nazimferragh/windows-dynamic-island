@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: write
+  actions: read
+
+env:
+  # Code signing by SignPath Foundation turns on automatically once the repository variable
+  # SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN exist (see README → Code signing).
+  SIGNING: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
 
 jobs:
   build:
@@ -21,11 +27,74 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Build installer
+      - name: Version
+        id: version
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '' }
-          ./build.ps1 -Version $version
+          $v = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { (Select-Xml -Path src/DynamicIsland/DynamicIsland.csproj -XPath '//Version').Node.InnerText }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish app
+        shell: pwsh
+        run: ./build.ps1 -Version ${{ steps.version.outputs.value }} -Stage Publish
+
+      # 1) Sign the app itself, so the installed DynamicIsland.exe is trusted too.
+      - name: Upload app for signing
+        id: upload-app
+        if: env.SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-unsigned
+          path: publish/DynamicIsland.exe
+
+      - name: Sign app
+        if: env.SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'windows-dynamic-island' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY || 'release-signing' }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.upload-app.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: publish
+
+      - name: Build installer
+        shell: pwsh
+        run: ./build.ps1 -Version ${{ steps.version.outputs.value }} -Stage Installer
+
+      # 2) Sign the installer.
+      - name: Upload installer for signing
+        id: upload-installer
+        if: env.SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-unsigned
+          path: dist/*.exe
+
+      - name: Sign installer
+        if: env.SIGNING == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'windows-dynamic-island' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Check signatures
+        if: env.SIGNING == 'true'
+        shell: pwsh
+        run: |
+          foreach ($f in @('publish/DynamicIsland.exe') + (Get-ChildItem dist/*.exe).FullName) {
+            $s = Get-AuthenticodeSignature $f
+            "$f : $($s.Status) ($($s.SignerCertificate.Subject))"
+            if ($s.Status -ne 'Valid') { throw "$f is not validly signed" }
+          }
 
       - uses: actions/upload-artifact@v4
         with:
