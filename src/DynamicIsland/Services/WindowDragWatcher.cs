@@ -26,6 +26,7 @@ public sealed class WindowDragWatcher : IDisposable
     private IntPtr _hwnd;
     private WindowApi.RECT _startRect;
     private WindowApi.WINDOWPLACEMENT _startPlacement;
+    private bool _resized;
 
     public event Action<WindowDrag>? Moved;
     public event Action<WindowDrag>? Ended;
@@ -38,7 +39,10 @@ public sealed class WindowDragWatcher : IDisposable
         if (_hook == IntPtr.Zero) Log.Error("Could not watch window drags (SetWinEventHook failed)");
         _poll.Tick += (_, _) =>
         {
-            if (_hwnd != IntPtr.Zero) Moved?.Invoke(Current());
+            if (_hwnd == IntPtr.Zero) return;
+            // A size change *during* the drag means the user is resizing by an edge, not moving.
+            if (SizeChanged()) _resized = true;
+            Moved?.Invoke(Current());
         };
     }
 
@@ -57,22 +61,29 @@ public sealed class WindowDragWatcher : IDisposable
             _hwnd = WindowApi.GetRootWindow(hwnd);
             WindowApi.GetWindowRect(_hwnd, out _startRect);
             _startPlacement = WindowApi.GetPlacement(_hwnd);
+            _resized = false;
             _poll.Start();
         }
         else if (eventType == EVENT_SYSTEM_MOVESIZEEND && _hwnd != IntPtr.Zero)
         {
             _poll.Stop();
+            // Don't look at the size now: on release Windows may already have snapped or maximized the
+            // window (drag-to-top), which changes its size even though the user was moving it.
             var drag = Current();
             _hwnd = IntPtr.Zero;
             Ended?.Invoke(drag);
         }
     }
 
+    private bool SizeChanged()
+    {
+        WindowApi.GetWindowRect(_hwnd, out var rect);
+        return rect.Width != _startRect.Width || rect.Height != _startRect.Height;
+    }
+
     private WindowDrag Current()
     {
         WindowApi.GetCursorPos(out var cursor);
-        WindowApi.GetWindowRect(_hwnd, out var rect);
-        bool isMove = rect.Width == _startRect.Width && rect.Height == _startRect.Height;
-        return new WindowDrag(_hwnd, cursor.X, cursor.Y, isMove, _startPlacement);
+        return new WindowDrag(_hwnd, cursor.X, cursor.Y, !_resized, _startPlacement);
     }
 }

@@ -20,6 +20,9 @@ public sealed class AbsorbedWindow
     public BitmapSource? Snapshot { get; init; }
     public ImageSource? Icon { get; init; }
     public WindowApi.WINDOWPLACEMENT Placement { get; init; }
+
+    /// <summary>The virtual desktop it was absorbed from (Guid.Empty if unknown).</summary>
+    public Guid DesktopId { get; init; }
 }
 
 /// <summary>
@@ -41,17 +44,35 @@ public sealed class WindowVault
 
     private readonly List<AbsorbedWindow> _items = new();
     private readonly DispatcherTimer _sweep = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly DispatcherTimer _desktopPoll = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private Guid _currentDesktop = VirtualDesktops.GetCurrentDesktop();
 
     public WindowVault()
     {
         _sweep.Tick += (_, _) => Sweep();
         _sweep.Start();
+
+        // Each virtual desktop has its own black hole: refresh the shelf when the user switches.
+        _desktopPoll.Tick += (_, _) =>
+        {
+            var desktop = VirtualDesktops.GetCurrentDesktop();
+            if (desktop == _currentDesktop) return;
+            _currentDesktop = desktop;
+            Changed?.Invoke();
+        };
+        _desktopPoll.Start();
     }
 
-    /// <summary>Newest first.</summary>
+    /// <summary>Everything absorbed, on every desktop. Newest first.</summary>
     public IReadOnlyList<AbsorbedWindow> Items => _items;
 
+    /// <summary>What the black hole shows right now: windows absorbed on the current virtual desktop.</summary>
+    public IReadOnlyList<AbsorbedWindow> VisibleItems => _items.Where(IsOnCurrentDesktop).ToList();
+
     public event Action? Changed;
+
+    private bool IsOnCurrentDesktop(AbsorbedWindow item) =>
+        _currentDesktop == Guid.Empty || item.DesktopId == Guid.Empty || item.DesktopId == _currentDesktop;
 
     public static bool CanAbsorb(IntPtr hwnd)
     {
@@ -78,6 +99,7 @@ public sealed class WindowVault
             Snapshot = WindowApi.IsHung(hwnd) ? null : CaptureSnapshot(hwnd),
             Icon = LoadIcon(hwnd, exePath),
             Placement = restorePlacement ?? WindowApi.GetPlacement(hwnd),
+            DesktopId = VirtualDesktops.GetWindowDesktop(hwnd),
         };
     }
 

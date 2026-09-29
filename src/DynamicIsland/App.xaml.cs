@@ -74,7 +74,8 @@ public partial class App : Application
 
         // Any windows a previous run left hidden (crash, forced kill) come back first.
         WindowVault.RecoverOrphans();
-        ShellTweaks.DisableSnapBarOnDragToTop();
+        // Settings that would get in the island's way (may restart Explorer once, right after install).
+        await System.Threading.Tasks.Task.Run(ShellTweaks.ApplyOnce);
         _vault = new WindowVault();
         _dragWatcher = new WindowDragWatcher();
         SessionEnding += (_, _) => _vault.RestoreAll();

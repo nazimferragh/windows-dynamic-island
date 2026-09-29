@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
@@ -84,9 +85,11 @@ public partial class IslandWindow : Window
     private DateTime? _zoneEnteredAt;
     private bool _inZone;
     private bool _capture; // armed: releasing now absorbs the window
+    private (AbsorbedWindow Item, WindowApi.RECT Rect)? _armed;
     private bool _spinning;
 
     // Black hole: pulling a window back out of the shelf.
+    private IReadOnlyList<AbsorbedWindow> _visibleItems = Array.Empty<AbsorbedWindow>();
     private AbsorbedWindow? _pressedItem;
     private WindowApi.POINT _pressPoint;
     private DragGhost? _ghost;
@@ -111,6 +114,7 @@ public partial class IslandWindow : Window
                 Watchdog();
             });
         };
+        _strip.PositionChanged += PositionOnMonitor;
         _strip.Show();
         _strip.Reserve();
 
@@ -195,7 +199,7 @@ public partial class IslandWindow : Window
         int w = (int)Math.Round(Width * dpi.DpiScaleX);
         int h = (int)Math.Round(Height * dpi.DpiScaleY);
         int x = _monitor.X + (_monitor.Width - w) / 2;
-        NativeMethods.PlaceTopmost(_hwnd, x, _monitor.Y, w, h);
+        NativeMethods.PlaceTopmost(_hwnd, x, _strip.ReservedTop, w, h);
     }
 
     private bool IsOnMyMonitor(int x, int y) =>
@@ -205,7 +209,7 @@ public partial class IslandWindow : Window
     private (double Dx, double Dy) FromNotch(int x, int y)
     {
         double s = DpiScale;
-        return ((x - (_monitor.X + _monitor.Width / 2.0)) / s, (y - _monitor.Y) / s);
+        return ((x - (_monitor.X + _monitor.Width / 2.0)) / s, (y - _strip.ReservedTop) / s);
     }
 
     // ---------------------------------------------------------------- state
@@ -220,7 +224,7 @@ public partial class IslandWindow : Window
     private Silhouette CurrentSilhouette()
     {
         bool hasMedia = _snapshot != null;
-        bool hasVault = _vault.Items.Count > 0;
+        bool hasVault = _visibleItems.Count > 0;
         switch (_state)
         {
             case State.Open:
@@ -262,7 +266,7 @@ public partial class IslandWindow : Window
 
         Reveal(ClosedMedia, closed && hasMedia, animate);
         Reveal(PeekText, _state == State.Peek && hasMedia, animate);
-        Reveal(ClosedVault, closed && !hasMedia && _vault.Items.Count > 0, animate);
+        Reveal(ClosedVault, closed && !hasMedia && _visibleItems.Count > 0, animate);
         Reveal(BlackHoleContent, _state == State.Attract, animate);
         Reveal(OpenContent, _state == State.Open, animate);
 
@@ -450,7 +454,14 @@ public partial class IslandWindow : Window
         // Only arm after the window has been held over the notch for a moment.
         _zoneEnteredAt = inZone ? _zoneEnteredAt ?? DateTime.UtcNow : null;
         bool armed = inZone && DateTime.UtcNow - _zoneEnteredAt >= ArmDelay;
-        if (armed && !_capture) _height.Kick(160); // a little "got it" bump
+        if (armed && !_capture)
+        {
+            _height.Kick(160); // a little "got it" bump
+            // Snapshot it now, while it still looks the way the user is holding it: on release
+            // Windows may snap/maximize it (drag-to-top) before we get to hide it.
+            var item = _vault.Prepare(drag.Hwnd, drag.StartPlacement);
+            _armed = item == null ? null : (item, WindowApi.GetVisibleBounds(drag.Hwnd));
+        }
 
         _openTimer.Stop();
         _closeTimer.Stop();
@@ -464,10 +475,10 @@ public partial class IslandWindow : Window
 
     private void OnWindowDragEnded(WindowDrag drag)
     {
-        bool armed = _state == State.Attract && _capture;
+        var armed = _state == State.Attract && _capture ? _armed : null;
         ExitAttract();
-        if (armed && drag.IsMove && IsInCaptureZone(drag.CursorX, drag.CursorY))
-            AbsorbWindow(drag.Hwnd, drag.StartPlacement);
+        if (armed == null || !drag.IsMove || !IsInCaptureZone(drag.CursorX, drag.CursorY)) return;
+        Swallow(armed.Value.Item, armed.Value.Rect);
     }
 
     private bool IsInCaptureZone(int x, int y)
@@ -480,6 +491,7 @@ public partial class IslandWindow : Window
     private void ExitAttract()
     {
         _zoneEnteredAt = null;
+        _armed = null;
         if (_state != State.Attract) return;
         _inZone = false;
         _capture = false;
@@ -497,23 +509,23 @@ public partial class IslandWindow : Window
             Wobble();
             return;
         }
+        Swallow(item, WindowApi.GetVisibleBounds(hwnd));
+    }
 
-        var rect = WindowApi.GetVisibleBounds(hwnd);
-        double s = DpiScale;
-        var target = new Point(_monitor.X + _monitor.Width / 2.0, _monitor.Y + 18 * s);
-        var animation = new AbsorbAnimation(item.Snapshot, rect, target, s);
-
-        // Hide the real window only once the overlay is on screen, so there's no flicker.
-        animation.ContentRendered += (_, _) =>
+    /// <summary>Hides the window right away and plays the swirl from where it was (physical rect).</summary>
+    private void Swallow(AbsorbedWindow item, WindowApi.RECT rect)
+    {
+        // Hide immediately: waiting would let Windows' own drag-to-top maximize flash on screen.
+        if (!_vault.Commit(item))
         {
-            if (!_vault.Commit(item))
-            {
-                animation.Close();
-                Wobble();
-                return;
-            }
-            animation.Play();
-        };
+            Wobble();
+            return;
+        }
+
+        double s = DpiScale;
+        var target = new Point(_monitor.X + _monitor.Width / 2.0, _strip.ReservedTop + 18 * s);
+        var animation = new AbsorbAnimation(item.Snapshot, rect, target, s);
+        animation.ContentRendered += (_, _) => animation.Play();
         animation.Finished += Gulp;
         animation.Show();
     }
@@ -552,12 +564,13 @@ public partial class IslandWindow : Window
 
     private void RebuildShelf()
     {
-        int count = _vault.Items.Count;
+        _visibleItems = _vault.VisibleItems;
+        int count = _visibleItems.Count;
         ClosedVaultCount.Text = count.ToString(CultureInfo.CurrentCulture);
         ShelfCount.Text = count == 1 ? "1 window" : $"{count} windows";
 
         ShelfPanel.Children.Clear();
-        foreach (var item in _vault.Items) ShelfPanel.Children.Add(CreateCard(item));
+        foreach (var item in _visibleItems) ShelfPanel.Children.Add(CreateCard(item));
     }
 
     private FrameworkElement CreateCard(AbsorbedWindow item)

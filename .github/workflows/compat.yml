@@ -1,0 +1,69 @@
+name: Compatibility smoke test
+
+# Installs the app the way a user would, launches it, and checks it's running with its islands.
+# windows-2022 runs the Windows 10 (21H2) shell code base; windows-2025 matches Windows 11 24H2.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Install silently and launch
+        shell: pwsh
+        run: |
+          [Environment]::OSVersion.Version
+          $setup = Get-ChildItem dist/*.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/NORESTART' -Wait
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Dynamic Island\DynamicIsland.exe'
+          if (-not (Test-Path $exe)) { throw "Not installed at $exe" }
+          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').DynamicIsland) { throw "Startup entry missing" }
+          Start-Process $exe
+          Start-Sleep 25
+
+      - name: Check it is running
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:LOCALAPPDATA 'DynamicIsland\log.txt'
+          Copy-Item $log island-log.txt
+          Get-Content $log
+          if (-not (Get-Process DynamicIsland -ErrorAction SilentlyContinue)) { throw "Dynamic Island is not running" }
+          if (-not (Select-String -Path $log -Pattern 'Islands created' -Quiet)) { throw "No islands were created" }
+          if (Select-String -Path $log -Pattern 'Fatal exception' -Quiet) { throw "Fatal exception logged" }
+
+      - name: Screenshot
+        if: always()
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("screenshot-${{ matrix.os }}.png")
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: |
+            screenshot-*.png
+            island-log.txt

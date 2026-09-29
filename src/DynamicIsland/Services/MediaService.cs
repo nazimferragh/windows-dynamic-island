@@ -206,9 +206,10 @@ public sealed class MediaService : IDisposable
                 Artwork = _art,
                 Accent = _accent,
                 IsPlaying = status == PlaybackStatus.Playing,
-                Position = timeline.Position,
-                Duration = timeline.EndTime - timeline.StartTime,
-                PositionUpdatedAt = timeline.LastUpdatedTime,
+                // The timeline can be missing while an app is closing its media session.
+                Position = timeline?.Position ?? TimeSpan.Zero,
+                Duration = timeline != null ? timeline.EndTime - timeline.StartTime : TimeSpan.Zero,
+                PositionUpdatedAt = timeline?.LastUpdatedTime ?? default,
                 PlaybackRate = playback?.PlaybackRate ?? 1.0,
             });
         }

@@ -58,9 +58,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 ; Always starts with Windows, like a built-in component.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIsland"; ValueData: """{app}\{#AppExe}"""; Flags: uninsdeletevalue
 
-; Windows' snap layouts bar drops from the top-center on drag, right where the island is.
-; Turned off while installed; uninstalling removes the value, which restores Windows' default.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; ValueType: dword; ValueName: "EnableSnapBar"; ValueData: 0; Flags: uninsdeletevalue
+; The app turns off Windows 11's drag-to-top snap layouts bar on first run (it sits right where the
+; island is). Uninstalling removes the value, which restores Windows' default.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; ValueName: "EnableSnapBar"; Flags: uninsdeletevalue dontcreatekey
 Root: HKCU; Subkey: "Software\DynamicIsland"; Flags: uninsdeletekey
 
 [Run]

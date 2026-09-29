@@ -31,6 +31,7 @@ internal sealed class MenuBarStrip : Window
     public MenuBarStrip(Int32Rect monitor)
     {
         _monitor = monitor;
+        ReservedTop = monitor.Y;
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
@@ -63,6 +64,12 @@ internal sealed class MenuBarStrip : Window
 
     /// <summary>Raised when Windows reports a fullscreen app opening or closing.</summary>
     public event Action? FullscreenAppChanged;
+
+    /// <summary>Raised when the strip moved (e.g. a Windows 10 taskbar docked at the top pushes it down).</summary>
+    public event Action? PositionChanged;
+
+    /// <summary>Top of the strip in physical pixels: the monitor top, or just below a top-docked taskbar.</summary>
+    public int ReservedTop { get; private set; }
 
     private WindowApi.RECT MonitorRect => new()
     {
@@ -110,11 +117,27 @@ internal sealed class MenuBarStrip : Window
             ? _appBar.ReserveTop(MonitorRect, height)
             : new WindowApi.RECT { Left = _monitor.X, Top = _monitor.Y, Right = _monitor.X + _monitor.Width, Bottom = _monitor.Y + height };
         WindowApi.PlaceTopmost(_hwnd, rect.Left, rect.Top, rect.Width, rect.Height);
+        if (rect.Top != ReservedTop)
+        {
+            ReservedTop = rect.Top;
+            PositionChanged?.Invoke();
+        }
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (_appBar == null || msg != (int)_appBar.CallbackMessage) return IntPtr.Zero;
+        if (_appBar == null) return IntPtr.Zero;
+
+        // Explorer restarted: our reserved strip is gone, claim it again.
+        if (msg == (int)AppBar.TaskbarCreatedMessage)
+        {
+            _appBar.ForgetRegistration();
+            if (_wantReserved) Reserve();
+            Log.Info("Explorer restarted; top strip reserved again");
+            return IntPtr.Zero;
+        }
+
+        if (msg != (int)_appBar.CallbackMessage) return IntPtr.Zero;
         switch (wParam.ToInt32())
         {
             case AppBar.ABN_POSCHANGED:

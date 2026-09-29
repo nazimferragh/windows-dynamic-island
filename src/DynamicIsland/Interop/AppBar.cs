@@ -39,6 +39,12 @@ internal sealed class AppBar
         CallbackMessage = RegisterWindowMessage("DynamicIsland.AppBarCallback");
     }
 
+    /// <summary>Broadcast by Explorer when it (re)starts; every app bar registration was lost with it.</summary>
+    public static uint TaskbarCreatedMessage { get; } = RegisterWindowMessage("TaskbarCreated");
+
+    /// <summary>After an Explorer restart our registration no longer exists; forget it so Register() redoes it.</summary>
+    public void ForgetRegistration() => IsRegistered = false;
+
     /// <summary>Windows sends this message to the app bar window with an ABN_* code in wParam.</summary>
     public uint CallbackMessage { get; }
 
