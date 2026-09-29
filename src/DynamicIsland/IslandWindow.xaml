@@ -1,0 +1,163 @@
+<Window x:Class="DynamicIsland.IslandWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:DynamicIsland.Controls"
+        Title="Dynamic Island"
+        Width="480" Height="220"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+        <SolidColorBrush x:Key="SecondaryText" Color="#A6FFFFFF" />
+        <SolidColorBrush x:Key="TertiaryText" Color="#66FFFFFF" />
+        <SolidColorBrush x:Key="ArtPlaceholder" Color="#262628" />
+
+        <Style x:Key="MediaButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Margin" Value="6,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="Transparent" CornerRadius="999" RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="Scale" />
+                            </Border.RenderTransform>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#1FFFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#38FFFFFF" />
+                                <Setter TargetName="Bg" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.9" ScaleY="0.9" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="OneLine" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
+    </Window.Resources>
+
+    <!-- The pill. Its size and corner radius are driven by springs in code-behind. -->
+    <Grid x:Name="Pill"
+          HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,6,0,0"
+          Width="120" Height="34"
+          MouseEnter="Pill_MouseEnter" MouseLeave="Pill_MouseLeave"
+          MouseLeftButtonUp="Pill_MouseLeftButtonUp">
+
+        <Border x:Name="PillBackground" Background="Black" BorderBrush="#1CFFFFFF" BorderThickness="1" CornerRadius="17" />
+
+        <!-- Content has a fixed size and is centered, so the growing pill "reveals" it. -->
+        <Grid x:Name="PillContent">
+
+            <!-- Compact, nothing playing: just the clock. -->
+            <Grid x:Name="CompactIdle" Height="34" VerticalAlignment="Top">
+                <TextBlock x:Name="CompactClock" Foreground="White" FontSize="13" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+
+            <!-- Compact, media: artwork on the left, bars on the right (like the iPhone). -->
+            <Grid x:Name="CompactMedia" Width="230" Height="34" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <Border x:Name="CompactArt" Width="22" Height="22" CornerRadius="6" Margin="7,0,0,0"
+                        HorizontalAlignment="Left" Background="{StaticResource ArtPlaceholder}">
+                    <TextBlock x:Name="CompactArtGlyph" Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="11"
+                               Foreground="{StaticResource TertiaryText}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <controls:Equalizer x:Name="CompactEq" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0"
+                                    BarWidth="3" BarHeight="14" BarSpacing="2.5" />
+            </Grid>
+
+            <!-- Expanded, nothing playing. -->
+            <Grid x:Name="ExpandedIdle" Width="340" Height="92" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False" RenderTransformOrigin="0.5,0">
+                <Grid.RenderTransform>
+                    <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
+                </Grid.RenderTransform>
+                <StackPanel HorizontalAlignment="Left" VerticalAlignment="Center" Margin="26,0,0,0">
+                    <TextBlock x:Name="BigClock" Foreground="White" FontSize="32" FontWeight="Light" />
+                    <TextBlock x:Name="DateText" Foreground="{StaticResource SecondaryText}" FontSize="12" Margin="1,0,0,0" />
+                </StackPanel>
+                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,26,0" Orientation="Horizontal">
+                    <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="13"
+                               Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
+                    <TextBlock Text="Nothing playing" FontSize="12" Foreground="{StaticResource TertiaryText}"
+                               Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Expanded, media player. -->
+            <Grid x:Name="ExpandedMedia" Width="400" Height="168" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False" RenderTransformOrigin="0.5,0">
+                <Grid.RenderTransform>
+                    <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
+                </Grid.RenderTransform>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Margin="20,20,20,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="ExpandedArt" Width="56" Height="56" CornerRadius="13" Background="{StaticResource ArtPlaceholder}">
+                        <TextBlock x:Name="ExpandedArtGlyph" Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="20"
+                                   Foreground="{StaticResource TertiaryText}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="14,0,12,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" Style="{StaticResource OneLine}" Foreground="White" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock x:Name="ArtistText" Style="{StaticResource OneLine}" Foreground="{StaticResource SecondaryText}" FontSize="13" Margin="0,1,0,0" />
+                        <TextBlock x:Name="SourceText" Style="{StaticResource OneLine}" Foreground="{StaticResource TertiaryText}" FontSize="11" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <controls:Equalizer x:Name="ExpandedEq" Grid.Column="2" VerticalAlignment="Top" Margin="0,6,2,0"
+                                        BarWidth="3.5" BarHeight="18" BarSpacing="3" />
+                </Grid>
+
+                <Grid x:Name="ProgressRow" Grid.Row="1" Margin="20,14,20,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="40" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="ElapsedText" FontSize="11" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
+                    <Grid x:Name="ProgressTrack" Grid.Column="1" Height="4" VerticalAlignment="Center">
+                        <Border Background="#33FFFFFF" CornerRadius="2" />
+                        <Border x:Name="ProgressFill" Background="White" CornerRadius="2" HorizontalAlignment="Left" Width="0" />
+                    </Grid>
+                    <TextBlock x:Name="RemainingText" Grid.Column="2" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                               TextAlignment="Right" VerticalAlignment="Center" />
+                </Grid>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Button x:Name="PreviousButton" Style="{StaticResource MediaButton}" Content="&#xE892;" Click="Previous_Click" />
+                    <Button x:Name="PlayPauseButton" Style="{StaticResource MediaButton}" Content="&#xE768;" FontSize="22"
+                            Width="48" Height="48" Click="PlayPause_Click" />
+                    <Button x:Name="NextButton" Style="{StaticResource MediaButton}" Content="&#xE893;" Click="Next_Click" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DynamicIsland</AssemblyName>
+    <RootNamespace>DynamicIsland</RootNamespace>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WFO0003 targets WinForms apps; this is a WPF app that only borrows NotifyIcon. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+
+    <Version>0.1.0</Version>
+    <Product>Dynamic Island</Product>
+    <Company>Nazim Ferragh</Company>
+    <Description>A Dynamic Island for Windows.</Description>
+    <Copyright>Copyright © 2026 Nazim Ferragh</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\icon.ico" Link="Assets\icon.ico" />
+  </ItemGroup>
+
+</Project>
