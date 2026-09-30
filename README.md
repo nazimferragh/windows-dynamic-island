@@ -17,6 +17,7 @@ A Dynamic Island for Windows that sits at the top of your screen and looks like 
   - Each virtual desktop has its own black hole: a window thrown in on Desktop 2 only shows up in Desktop 2's island.
   - Hover the island to see the absorbed windows as cards. **Click** a card to bring its window back where it was, or **drag the card out** to put the window wherever you drop it.
   - Safety net: absorbed windows come back if the island exits or crashes, and any window left hidden by an earlier run is restored at startup.
+- **Search & play, inside the island.** Open the island and hit **Search & play**: a panel drops down under the notch with an embedded YouTube. Type a song, pick it, and it plays right there — no browser tab. Tuck the panel away and the music keeps going, with the island showing it like any other track. (Uses the WebView2 runtime, which ships with Windows 10/11; it plays through YouTube's official player.)
 - **Week calendar** with today highlighted, and **battery** status on laptops.
 - **A menu bar like the Mac's.** A thin strip at the top of each screen is reserved, the same way the taskbar reserves its space, so maximized apps sit below the island instead of under it. While an app is maximized, the strip turns black and the notch blends into it.
 - **On every virtual desktop**, and it **hides on a monitor while an app is fullscreen on it** (videos, games, presentations).

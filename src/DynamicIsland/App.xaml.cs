@@ -98,6 +98,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
         _dragWatcher?.Dispose();
         if (_hotkeySink != null)

@@ -944,6 +944,16 @@ public partial class IslandWindow : Window
         SetState(State.Open);
     }
 
+    private void SearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        MediaBrowserWindow.Toggle(_monitor);
+        // Collapse the notch so it doesn't sit over the panel's search box.
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _hovered = false;
+        SetState(State.Closed);
+    }
+
     private async void PlayPause_Click(object sender, RoutedEventArgs e) => await _media.TogglePlayPauseAsync();
     private async void Next_Click(object sender, RoutedEventArgs e) => await _media.NextAsync();
     private async void Previous_Click(object sender, RoutedEventArgs e) => await _media.PreviousAsync();

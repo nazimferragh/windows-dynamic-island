@@ -21,6 +21,8 @@
         <Geometry x:Key="NextGlyph">M 0,0 L 10,6 L 0,12 Z M 10,0 L 20,6 L 10,12 Z</Geometry>
         <Geometry x:Key="PreviousGlyph">M 20,0 L 10,6 L 20,12 Z M 10,0 L 0,6 L 10,12 Z</Geometry>
         <Geometry x:Key="NoteGlyph">M 6,0 L 16,0 L 16,11.5 A 2.8,2.8 0 1 1 13.2,8.8 L 13.2,4 L 8.8,4 L 8.8,13.5 A 2.8,2.8 0 1 1 6,10.8 Z</Geometry>
+        <!-- Magnifier outline (drawn as a stroked path). -->
+        <Geometry x:Key="SearchGlyph">M 6.5,0 A 6.5,6.5 0 1 0 6.5,13 A 6.5,6.5 0 1 0 6.5,0 M 11.5,11.5 L 17,17</Geometry>
 
         <Style x:Key="TransportButton" TargetType="Button">
             <Setter Property="Width" Value="40" />
@@ -160,6 +162,29 @@
                     <TextBlock x:Name="SourceText" FontSize="11" Foreground="{StaticResource SecondaryText}"
                                Margin="8,0,0,0" VerticalAlignment="Center" />
                 </StackPanel>
+                <!-- Search & play (opens the in-island YouTube panel). -->
+                <Button x:Name="SearchButton" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"
+                        Cursor="Hand" Focusable="False" Click="SearchButton_Click" Background="Transparent" BorderThickness="0">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bg" Background="#18FFFFFF" CornerRadius="999" Padding="11,4">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path Data="{StaticResource SearchGlyph}" Stroke="White" StrokeThickness="1.6"
+                                          Width="13" Height="13" Stretch="Uniform" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          VerticalAlignment="Center" />
+                                    <TextBlock Text="Search &amp; play" Foreground="White" FontSize="11.5" FontWeight="SemiBold"
+                                               Margin="7,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="#30FFFFFF" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <StackPanel x:Name="BatteryPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
                             Margin="0,4,30,0" Visibility="Collapsed">
                     <TextBlock x:Name="BatteryText" FontSize="11" Foreground="{StaticResource SecondaryText}"
