@@ -24,6 +24,16 @@ namespace DynamicIsland.Overlays;
 internal sealed class MediaBrowserWindow : Window
 {
     private const string Home = "https://www.youtube.com";
+
+    // Injects a stylesheet that hides YouTube's masthead (its logo + search + sign-in) and closes the
+    // gap it leaves, so the island's own search box is the only search. Re-applies on every navigation.
+    private const string HideMastheadScript =
+        "(function(){var css='ytd-masthead,#masthead,#masthead-container,#container.ytd-searchbox," +
+        "tp-yt-app-header{display:none!important}#page-manager{margin-top:0!important}" +
+        "ytd-app{--ytd-masthead-height:0px!important}';" +
+        "var apply=function(){var s=document.getElementById('di-hide')||document.createElement('style');" +
+        "s.id='di-hide';s.textContent=css;(document.head||document.documentElement).appendChild(s);};" +
+        "apply();document.addEventListener('DOMContentLoaded',apply);})();";
     private const int DwmwaWindowCornerPreference = 33;
     private const int DwmwcpRound = 2;
 
@@ -199,6 +209,15 @@ internal sealed class MediaBrowserWindow : Window
                 args.Handled = true;
                 if (!string.IsNullOrEmpty(args.Uri)) _web.CoreWebView2.Navigate(args.Uri);
             };
+
+            // Hide YouTube's own top bar (logo + search + sign-in) so only the island's search box
+            // drives it. Runs both before page scripts and after each load finishes (YouTube is an SPA).
+            await _web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HideMastheadScript);
+            _web.CoreWebView2.NavigationCompleted += async (_, _) =>
+            {
+                try { await _web.CoreWebView2.ExecuteScriptAsync(HideMastheadScript); } catch { }
+            };
+
             _web.CoreWebView2.Navigate(Home);
             _ready = true;
         }
