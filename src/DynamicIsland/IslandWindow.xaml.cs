@@ -742,7 +742,11 @@ public partial class IslandWindow : Window
 
         TitleText.Text = snapshot.Title;
         ArtistText.Text = snapshot.Artist;
-        SourceText.Text = snapshot.Source;
+        // Show the song, not the app: a real music app's name (Spotify) is fine, but "Google Chrome"
+        // for a browser is noise, so only the artwork + title + artist represent it.
+        bool showSource = !string.IsNullOrEmpty(snapshot.Source) && !snapshot.IsBrowser;
+        SourceText.Text = showSource ? snapshot.Source : "";
+        SourceText.Visibility = showSource ? Visibility.Visible : Visibility.Collapsed;
         PeekText.Text = string.IsNullOrEmpty(snapshot.Artist) ? snapshot.Title : $"{snapshot.Title}  ·  {snapshot.Artist}";
         OpenEq.Visibility = Visibility.Visible;
         ProgressRow.Visibility = snapshot.Duration > TimeSpan.Zero ? Visibility.Visible : Visibility.Collapsed;

@@ -7,7 +7,7 @@
 
 #define AppName "Dynamic Island"
 #define AppExe "DynamicIsland.exe"
-#define AppPublisher "Nazim Ferragh"
+#define AppPublisher "Nazim Abderahman"
 #define AppUrl "https://github.com/nazimferragh/windows-dynamic-island"
 
 [Setup]
@@ -23,9 +23,10 @@ VersionInfoVersion={#AppVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-; Installs per-user by default (no admin prompt); the user can choose "all users" instead.
+; Show the welcome page (modern wizard hides it by default); it's where the author is shown.
+DisableWelcomePage=no
+; Per-user install, no admin prompt and no install-mode chooser, so the author page is the first screen.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 UsedUserAreasWarning=no
 OutputDir=..\dist
 OutputBaseFilename=DynamicIsland-Setup-{#AppVersion}
@@ -49,6 +50,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Author photo shown on the first page; not installed, only used by the wizard.
+Source: "author.bmp"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -64,7 +67,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
 Root: HKCU; Subkey: "Software\DynamicIsland"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Starts on its own as soon as install finishes (no checkbox to leave it unchecked).
+Filename: "{app}\{#AppExe}"; Flags: nowait skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden; RunOnceId: "StopDynamicIsland"
@@ -73,6 +77,51 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden
 Type: filesandordirs; Name: "{localappdata}\DynamicIsland"
 
 [Code]
+procedure InitializeWizard;
+var
+  Avatar: TBitmapImage;
+  NameLabel, RoleLabel: TNewStaticText;
+  Top: Integer;
+begin
+  ExtractTemporaryFile('author.bmp');
+
+  WizardForm.WelcomeLabel1.Caption := 'Dynamic Island for Windows';
+
+  Top := WizardForm.WelcomeLabel1.Top + WizardForm.WelcomeLabel1.Height + ScaleY(20);
+
+  Avatar := TBitmapImage.Create(WizardForm);
+  Avatar.Parent := WizardForm.WelcomePage;
+  Avatar.Bitmap.LoadFromFile(ExpandConstant('{tmp}\author.bmp'));
+  Avatar.Stretch := True;
+  Avatar.Left := WizardForm.WelcomeLabel1.Left;
+  Avatar.Top := Top;
+  Avatar.Width := ScaleX(76);
+  Avatar.Height := ScaleY(76);
+
+  NameLabel := TNewStaticText.Create(WizardForm);
+  NameLabel.Parent := WizardForm.WelcomePage;
+  NameLabel.AutoSize := True;
+  NameLabel.Left := Avatar.Left + Avatar.Width + ScaleX(16);
+  NameLabel.Top := Top + ScaleY(18);
+  NameLabel.Font.Style := [fsBold];
+  NameLabel.Font.Size := 12;
+  NameLabel.Caption := 'Nazim Abderahman';
+
+  RoleLabel := TNewStaticText.Create(WizardForm);
+  RoleLabel.Parent := WizardForm.WelcomePage;
+  RoleLabel.AutoSize := True;
+  RoleLabel.Left := NameLabel.Left;
+  RoleLabel.Top := NameLabel.Top + NameLabel.Height + ScaleY(4);
+  RoleLabel.Font.Color := clGray;
+  RoleLabel.Caption := 'Developer';
+
+  WizardForm.WelcomeLabel2.Top := Top + Avatar.Height + ScaleY(20);
+  WizardForm.WelcomeLabel2.Caption :=
+    'This will install Dynamic Island on your computer.' + #13#10#13#10 +
+    'It sits at the top of your screen, shows what''s playing, holds windows in its black hole, and starts automatically with Windows.' + #13#10#13#10 +
+    'Click Next to continue.';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;

@@ -19,6 +19,9 @@ public sealed class MediaSnapshot
     public required string Title { get; init; }
     public required string Artist { get; init; }
     public required string Source { get; init; }
+    /// <summary>The app id (AUMID) reported by Windows, e.g. contains "chrome" / "msedge".</summary>
+    public string AppId { get; init; } = "";
+    public bool IsBrowser { get; init; }
     public BitmapSource? Artwork { get; init; }
     public Color Accent { get; init; }
     public bool IsPlaying { get; init; }
@@ -198,11 +201,14 @@ public sealed class MediaService : IDisposable
             }
 
             var timeline = session.GetTimelineProperties();
+            string appId = session.SourceAppUserModelId ?? "";
             Publish(new MediaSnapshot
             {
                 Title = props.Title,
                 Artist = string.IsNullOrWhiteSpace(props.Artist) ? props.AlbumTitle ?? "" : props.Artist,
-                Source = PrettifySource(session.SourceAppUserModelId),
+                Source = PrettifySource(appId),
+                AppId = appId,
+                IsBrowser = IsBrowserApp(appId),
                 Artwork = _art,
                 Accent = _accent,
                 IsPlaying = status == PlaybackStatus.Playing,
@@ -279,5 +285,13 @@ public sealed class MediaService : IDisposable
         int dot = name.LastIndexOf('.');
         if (dot >= 0 && dot < name.Length - 1) name = name[(dot + 1)..];
         return name;
+    }
+
+    private static readonly string[] Browsers = { "chrome", "msedge", "edge", "firefox", "brave", "opera", "vivaldi", "chromium" };
+
+    private static bool IsBrowserApp(string appId)
+    {
+        var lower = appId.ToLowerInvariant();
+        return Array.Exists(Browsers, b => lower.Contains(b));
     }
 }
