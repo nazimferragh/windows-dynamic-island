@@ -241,7 +241,7 @@ public partial class IslandWindow : Window
                 double h = OpenShape.Height;
                 if (_downloads.Items.Count > 0) h += _downloadsHeight;
                 if (hasVault) h += 130;
-                return new Silhouette(640, h, 14, 32);
+                return new Silhouette(640, h, 20, 28);
             case State.Attract:
                 if (_capture) return CaptureShape;
                 double a = _attraction;
@@ -394,11 +394,11 @@ public partial class IslandWindow : Window
     {
         double w = Math.Max(_width.Value, 40);
         double h = Math.Max(_height.Value, 16);
-        double flare = Math.Clamp(_flare.Value, 0, h / 3);
-        double r = Math.Clamp(_radius.Value, 0, Math.Min(w / 2, h - flare));
-        double left = (ActualWidthOrDefault() - w) / 2 - flare;
+        double topR = Math.Clamp(_flare.Value, 0, Math.Min(w / 2, h / 2));
+        double botR = Math.Clamp(_radius.Value, 0, Math.Min(w / 2, h - topR));
+        double left = (ActualWidthOrDefault() - w) / 2;
 
-        var geometry = BuildNotchGeometry(left, w, h, flare, r);
+        var geometry = BuildNotchGeometry(left, w, h, topR, botR);
         NotchShape.Data = geometry;
         NotchContent.Clip = geometry;
 
@@ -432,26 +432,25 @@ public partial class IslandWindow : Window
     private double ActualWidthOrDefault() => Notch.ActualWidth > 0 ? Notch.ActualWidth : Width;
 
     /// <summary>
-    /// The macOS notch outline: the top edge is flush with the screen, the top corners flare outward
-    /// into the screen edge (concave), and the bottom corners are rounded.
+    /// A clean rounded panel hanging from the top edge: flush at the top with gently rounded top
+    /// corners and generously rounded bottom corners.
     /// </summary>
-    private static Geometry BuildNotchGeometry(double left, double width, double height, double flare, double radius)
+    private static Geometry BuildNotchGeometry(double left, double width, double height, double topR, double botR)
     {
-        double outerLeft = left, outerRight = left + width + flare * 2;
-        double bodyLeft = left + flare, bodyRight = outerRight - flare;
+        double x0 = left, x1 = left + width;
 
         var geometry = new StreamGeometry();
         using (var ctx = geometry.Open())
         {
-            ctx.BeginFigure(new Point(outerLeft, 0), isFilled: true, isClosed: true);
-            ctx.LineTo(new Point(outerRight, 0), true, false);
-            ctx.QuadraticBezierTo(new Point(bodyRight, 0), new Point(bodyRight, flare), true, true);
-            ctx.LineTo(new Point(bodyRight, height - radius), true, false);
-            ctx.ArcTo(new Point(bodyRight - radius, height), new Size(radius, radius), 0, false, SweepDirection.Clockwise, true, true);
-            ctx.LineTo(new Point(bodyLeft + radius, height), true, false);
-            ctx.ArcTo(new Point(bodyLeft, height - radius), new Size(radius, radius), 0, false, SweepDirection.Clockwise, true, true);
-            ctx.LineTo(new Point(bodyLeft, flare), true, false);
-            ctx.QuadraticBezierTo(new Point(bodyLeft, 0), new Point(outerLeft, 0), true, true);
+            ctx.BeginFigure(new Point(x0 + topR, 0), isFilled: true, isClosed: true);
+            ctx.LineTo(new Point(x1 - topR, 0), true, false);
+            ctx.ArcTo(new Point(x1, topR), new Size(topR, topR), 0, false, SweepDirection.Clockwise, true, true);
+            ctx.LineTo(new Point(x1, height - botR), true, false);
+            ctx.ArcTo(new Point(x1 - botR, height), new Size(botR, botR), 0, false, SweepDirection.Clockwise, true, true);
+            ctx.LineTo(new Point(x0 + botR, height), true, false);
+            ctx.ArcTo(new Point(x0, height - botR), new Size(botR, botR), 0, false, SweepDirection.Clockwise, true, true);
+            ctx.LineTo(new Point(x0, topR), true, false);
+            ctx.ArcTo(new Point(x0 + topR, 0), new Size(topR, topR), 0, false, SweepDirection.Clockwise, true, true);
         }
         geometry.Freeze();
         return geometry;
