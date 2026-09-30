@@ -35,6 +35,7 @@ public partial class App : Application
     private MediaService? _media;
     private WindowVault? _vault;
     private WindowDragWatcher? _dragWatcher;
+    private DownloadWatcher? _downloads;
     private HwndSource? _hotkeySink;
     private bool _hidden;
 
@@ -78,6 +79,7 @@ public partial class App : Application
         await System.Threading.Tasks.Task.Run(ShellTweaks.ApplyOnce);
         _vault = new WindowVault();
         _dragWatcher = new WindowDragWatcher();
+        _downloads = new DownloadWatcher();
         SessionEnding += (_, _) => _vault.RestoreAll();
 
         _media = new MediaService();
@@ -101,6 +103,7 @@ public partial class App : Application
         Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
         _dragWatcher?.Dispose();
+        _downloads?.Dispose();
         if (_hotkeySink != null)
         {
             WindowApi.UnregisterHotKey(_hotkeySink.Handle, AbsorbHotkeyId);
@@ -126,7 +129,7 @@ public partial class App : Application
         foreach (var screen in Forms.Screen.AllScreens)
         {
             var b = screen.Bounds;
-            var island = new IslandWindow(_media!, _vault!, _dragWatcher!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
+            var island = new IslandWindow(_media!, _vault!, _dragWatcher!, _downloads!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
             if (!_hidden) island.Show();
             _islands.Add(island);
         }

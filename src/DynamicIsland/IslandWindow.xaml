@@ -23,6 +23,9 @@
         <Geometry x:Key="NoteGlyph">M 6,0 L 16,0 L 16,11.5 A 2.8,2.8 0 1 1 13.2,8.8 L 13.2,4 L 8.8,4 L 8.8,13.5 A 2.8,2.8 0 1 1 6,10.8 Z</Geometry>
         <!-- Magnifier outline (drawn as a stroked path). -->
         <Geometry x:Key="SearchGlyph">M 6.5,0 A 6.5,6.5 0 1 0 6.5,13 A 6.5,6.5 0 1 0 6.5,0 M 11.5,11.5 L 17,17</Geometry>
+        <Geometry x:Key="SpeakerGlyph">M 0,5 L 3,5 L 8,1 L 8,15 L 3,11 L 0,11 Z M 10.5,4 A 5,5 0 0 1 10.5,12 M 10.5,6.5 A 2.4,2.4 0 0 1 10.5,9.5</Geometry>
+        <!-- Down arrow into a tray. -->
+        <Geometry x:Key="DownloadGlyph">M 4.5,0 L 7.5,0 L 7.5,5 L 11,5 L 6,11 L 1,5 L 4.5,5 Z M 0,13 L 12,13 L 12,15.5 L 0,15.5 Z</Geometry>
 
         <Style x:Key="TransportButton" TargetType="Button">
             <Setter Property="Width" Value="40" />
@@ -103,6 +106,20 @@
                            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,18,0" />
             </Grid>
 
+            <!-- Closed, a download in progress (animated arrow + percent/count). -->
+            <Grid x:Name="ClosedDownload" Width="250" Height="32" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <Path x:Name="DownloadArrow" Data="{StaticResource DownloadGlyph}" Fill="#30D158" Width="13" Height="13"
+                      Stretch="Uniform" HorizontalAlignment="Left" Margin="17,0,0,0" VerticalAlignment="Center"
+                      RenderTransformOrigin="0.5,0.5">
+                    <Path.RenderTransform>
+                        <TranslateTransform x:Name="DownloadArrowT" />
+                    </Path.RenderTransform>
+                </Path>
+                <TextBlock x:Name="ClosedDownloadText" Foreground="White" FontSize="12" FontWeight="SemiBold"
+                           HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,18,0" />
+            </Grid>
+
             <!-- A window is being dragged toward the island. -->
             <Grid x:Name="BlackHoleContent" Width="440" Height="96" VerticalAlignment="Top" HorizontalAlignment="Center"
                   Opacity="0" IsHitTestVisible="False">
@@ -125,7 +142,7 @@
             <!-- Open. -->
             <!-- The shelf row sits below the notch's normal open height, so it's only revealed
                  (the notch grows taller) when windows are inside. -->
-            <Grid x:Name="OpenContent" Width="640" Height="316" VerticalAlignment="Top" HorizontalAlignment="Center"
+            <Grid x:Name="OpenContent" Width="640" Height="520" VerticalAlignment="Top" HorizontalAlignment="Center"
                   Opacity="0" IsHitTestVisible="False" RenderTransformOrigin="0.5,0">
                 <Grid.RenderTransform>
                     <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
@@ -133,11 +150,27 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="38" />
                     <RowDefinition Height="148" />
-                    <RowDefinition Height="130" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
+                <!-- Downloads (shown while something is downloading) -->
+                <Grid x:Name="DownloadsSection" Grid.Row="2" Margin="26,0,26,10" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="26" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Border Height="1" Background="#14FFFFFF" VerticalAlignment="Top" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,6">
+                        <Path Data="{StaticResource DownloadGlyph}" Fill="#30D158" Width="11" Height="11" Stretch="Uniform" VerticalAlignment="Center" />
+                        <TextBlock Text="Downloads" FontSize="11" FontWeight="SemiBold" Foreground="White" Margin="7,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="DownloadsCount" FontSize="11" Foreground="{StaticResource TertiaryText}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel x:Name="DownloadsPanel" Grid.Row="1" />
+                </Grid>
+
                 <!-- Black hole shelf -->
-                <Grid Grid.Row="2" Margin="26,0,26,18">
+                <Grid x:Name="ShelfSection" Grid.Row="3" Margin="26,0,26,18">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="24" />
                         <RowDefinition Height="*" />
@@ -217,16 +250,18 @@
                         <TextBlock x:Name="ArtistText" Style="{StaticResource OneLine}" Foreground="{StaticResource SecondaryText}"
                                    FontSize="13" Margin="0,1,0,0" />
 
-                        <Grid x:Name="ProgressRow" Margin="0,12,0,0">
+                        <Grid x:Name="ProgressRow" Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="36" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="36" />
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="ElapsedText" FontSize="10" Foreground="{StaticResource SecondaryText}" VerticalAlignment="Center" />
-                            <Grid x:Name="ProgressTrack" Grid.Column="1" Height="5" VerticalAlignment="Center">
-                                <Border Background="#2EFFFFFF" CornerRadius="2.5" />
-                                <Border x:Name="ProgressFill" Background="White" CornerRadius="2.5" HorizontalAlignment="Left" Width="0" />
+                            <Grid x:Name="ProgressTrack" Grid.Column="1" Height="16" VerticalAlignment="Center" Background="#01000000" Cursor="Hand"
+                                  MouseLeftButtonDown="Progress_Down" MouseMove="Progress_Move" MouseLeftButtonUp="Progress_Up">
+                                <Border Height="5" Background="#2EFFFFFF" CornerRadius="2.5" VerticalAlignment="Center" />
+                                <Border x:Name="ProgressFill" Height="5" Background="White" CornerRadius="2.5" HorizontalAlignment="Left" Width="0" VerticalAlignment="Center" />
+                                <Ellipse x:Name="ProgressThumb" Width="11" Height="11" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-6,0,0,0" />
                             </Grid>
                             <TextBlock x:Name="RemainingText" Grid.Column="2" FontSize="10" Foreground="{StaticResource SecondaryText}"
                                        TextAlignment="Right" VerticalAlignment="Center" />
@@ -243,6 +278,23 @@
                                 <Path Data="{StaticResource NextGlyph}" Fill="White" Width="19" Stretch="Uniform" />
                             </Button>
                         </StackPanel>
+
+                        <!-- Volume -->
+                        <Grid x:Name="VolumeRow" Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Path Data="{StaticResource SpeakerGlyph}" Stroke="{StaticResource SecondaryText}" StrokeThickness="1.3"
+                                  Fill="{StaticResource SecondaryText}" Width="16" Height="15" Stretch="Uniform" VerticalAlignment="Center" />
+                            <Grid x:Name="VolumeTrack" Grid.Column="1" Height="16" Margin="10,0,0,0" VerticalAlignment="Center"
+                                  Background="#01000000" Cursor="Hand"
+                                  MouseLeftButtonDown="Volume_Down" MouseMove="Volume_Move" MouseLeftButtonUp="Volume_Up">
+                                <Border Height="4" Background="#2EFFFFFF" CornerRadius="2" VerticalAlignment="Center" />
+                                <Border x:Name="VolumeFill" Height="4" Background="White" CornerRadius="2" HorizontalAlignment="Left" Width="0" VerticalAlignment="Center" />
+                                <Ellipse x:Name="VolumeThumb" Width="10" Height="10" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-5,0,0,0" />
+                            </Grid>
+                        </Grid>
                     </StackPanel>
 
                     <Border Grid.Column="2" Width="1" Background="#1AFFFFFF" Margin="0,14" />

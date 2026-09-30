@@ -1,12 +1,15 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using DynamicIsland.Interop;
 using DynamicIsland.Services;
@@ -41,6 +44,30 @@ internal sealed class MediaBrowserWindow : Window
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
     private static MediaBrowserWindow? _instance;
+
+    // The video currently loaded in the panel, so the island can show its real YouTube thumbnail
+    // (Windows itself often only hands us the browser icon for browser playback).
+    private static readonly HttpClient Http = new();
+    private static BitmapSource? _nowThumb;
+    private static string _nowTitle = "";
+    public static event Action? NowPlayingChanged;
+
+    /// <summary>The YouTube thumbnail for the panel's current video, if its title matches what's playing.</summary>
+    public static BitmapSource? ThumbnailFor(string playingTitle)
+    {
+        if (_nowThumb == null || string.IsNullOrWhiteSpace(playingTitle)) return null;
+        return TitlesMatch(_nowTitle, playingTitle) ? _nowThumb : null;
+    }
+
+    private static string Normalize(string s) => Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]", "");
+
+    private static bool TitlesMatch(string webTitle, string playing)
+    {
+        var a = Normalize(webTitle);
+        var b = Normalize(playing);
+        if (a.Length == 0 || b.Length == 0) return false;
+        return a.Contains(b) || b.Contains(a);
+    }
 
     private readonly WebView2 _web = new();
     private readonly TextBox _search = new();
@@ -88,42 +115,84 @@ internal sealed class MediaBrowserWindow : Window
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        // Top bar: a grabber, the search box, and a close button.
-        var bar = new Grid { Margin = new Thickness(12, 10, 12, 10) };
+        // Top bar: [ 🔍 search box ] [ x ]
+        var bar = new Grid { Margin = new Thickness(14, 12, 14, 12) };
         bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var searchHost = new Border
+        var searchRow = new Grid();
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var magnifier = new System.Windows.Shapes.Path
         {
-            Background = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x26)),
-            CornerRadius = new CornerRadius(999),
-            Padding = new Thickness(14, 7, 14, 7),
+            Data = Geometry.Parse("M 7,0 A 7,7 0 1 0 7,14 A 7,7 0 0 0 7,0 M 12,12 L 18,18"),
+            Stroke = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA2)),
+            StrokeThickness = 1.7,
+            Stretch = Stretch.Uniform,
+            Width = 15,
+            Height = 15,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, 10, 0),
         };
+        Grid.SetColumn(magnifier, 0);
+        searchRow.Children.Add(magnifier);
+
         _search.BorderThickness = new Thickness(0);
         _search.Background = Brushes.Transparent;
         _search.Foreground = Brushes.White;
         _search.CaretBrush = Brushes.White;
-        _search.FontSize = 14;
+        _search.FontSize = 13.5;
         _search.VerticalContentAlignment = VerticalAlignment.Center;
+        _search.VerticalAlignment = VerticalAlignment.Center;
         _search.KeyDown += Search_KeyDown;
         _search.GotKeyboardFocus += (_, _) => { if (_search.Text == PlaceholderText) ClearPlaceholder(); };
-        searchHost.Child = _search;
+        _search.LostKeyboardFocus += (_, _) => { if (string.IsNullOrEmpty(_search.Text)) SetPlaceholder(); };
+        Grid.SetColumn(_search, 1);
+        searchRow.Children.Add(_search);
+
+        var searchHost = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x24, 0x24, 0x28)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Height = 38,
+            Padding = new Thickness(13, 0, 13, 0),
+            Child = searchRow,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         Grid.SetColumn(searchHost, 0);
         bar.Children.Add(searchHost);
 
-        var close = new Button
+        var close = new Border
         {
-            Content = "✕",
-            Width = 34,
-            Height = 34,
+            Width = 38,
+            Height = 38,
             Margin = new Thickness(10, 0, 0, 0),
-            Foreground = Brushes.White,
+            CornerRadius = new CornerRadius(999),
             Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
             Cursor = Cursors.Hand,
-            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M 0,0 L 11,11 M 11,0 L 0,11"),
+                Stroke = Brushes.White,
+                StrokeThickness = 1.6,
+                Stretch = Stretch.Uniform,
+                Width = 11,
+                Height = 11,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+            },
         };
-        close.Click += (_, _) => Hide();
+        close.MouseEnter += (_, _) => close.Background = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+        close.MouseLeave += (_, _) => close.Background = Brushes.Transparent;
+        close.MouseLeftButtonUp += (_, _) => Hide();
         Grid.SetColumn(close, 1);
         bar.Children.Add(close);
 
@@ -166,7 +235,7 @@ internal sealed class MediaBrowserWindow : Window
 
     // ---------------------------------------------------------------- placeholder
 
-    private const string PlaceholderText = "Search YouTube for a song, then click it to play here";
+    private const string PlaceholderText = "Search for a song…";
 
     private void SetPlaceholder()
     {
@@ -216,6 +285,22 @@ internal sealed class MediaBrowserWindow : Window
             _web.CoreWebView2.NavigationCompleted += async (_, _) =>
             {
                 try { await _web.CoreWebView2.ExecuteScriptAsync(HideMastheadScript); } catch { }
+                _ = UpdateNowPlayingAsync();
+            };
+            // SPA navigations (clicking a video) don't reload the document, so also watch the URL.
+            _web.CoreWebView2.SourceChanged += (_, _) => _ = UpdateNowPlayingAsync();
+
+            // Downloads started from the in-island browser get exact progress in the island.
+            _web.CoreWebView2.DownloadStarting += (_, e) =>
+            {
+                var op = e.DownloadOperation;
+                var id = "wv:" + Guid.NewGuid().ToString("N");
+                var name = Path.GetFileName(op.ResultFilePath);
+                void Update(bool complete) =>
+                    DownloadWatcher.Instance?.Report(id, name, (long)op.BytesReceived, (long)(op.TotalBytesToReceive ?? 0), complete);
+                Update(false);
+                op.BytesReceivedChanged += (_, _) => Update(false);
+                op.StateChanged += (_, _) => Update(op.State == CoreWebView2DownloadState.Completed);
             };
 
             _web.CoreWebView2.Navigate(Home);
@@ -228,6 +313,64 @@ internal sealed class MediaBrowserWindow : Window
             _web.Visibility = Visibility.Collapsed;
             _fallback.Visibility = Visibility.Visible;
         }
+    }
+
+    // ---------------------------------------------------------------- now-playing thumbnail
+
+    private string _lastVideoId = "";
+
+    private async System.Threading.Tasks.Task UpdateNowPlayingAsync()
+    {
+        try
+        {
+            if (!_ready) return;
+            var id = ParseVideoId(_web.CoreWebView2.Source);
+            if (id == null || id == _lastVideoId) return;
+            _lastVideoId = id;
+
+            // The page title (updates a beat after an SPA navigation).
+            await System.Threading.Tasks.Task.Delay(400);
+            var raw = await _web.CoreWebView2.ExecuteScriptAsync("document.title");
+            _nowTitle = raw.Trim('"').Replace("\\u0026", "&").Replace(" - YouTube", "");
+
+            _nowThumb = await DownloadThumbnailAsync(id);
+            if (_nowThumb != null) Dispatcher.Invoke(() => NowPlayingChanged?.Invoke());
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not update now-playing thumbnail", ex);
+        }
+    }
+
+    private static string? ParseVideoId(string url)
+    {
+        var m = Regex.Match(url ?? "", @"[?&]v=([A-Za-z0-9_-]{11})");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    private static async System.Threading.Tasks.Task<BitmapSource?> DownloadThumbnailAsync(string id)
+    {
+        // hqdefault always exists; maxres doesn't for every video.
+        foreach (var name in new[] { "maxresdefault", "hqdefault" })
+        {
+            try
+            {
+                var bytes = await Http.GetByteArrayAsync($"https://i.ytimg.com/vi/{id}/{name}.jpg");
+                if (bytes.Length < 2000) continue; // YouTube returns a tiny grey placeholder when missing
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = new MemoryStream(bytes);
+                bmp.EndInit();
+                bmp.Freeze();
+                return bmp;
+            }
+            catch
+            {
+                // try the next size
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------- show / hide

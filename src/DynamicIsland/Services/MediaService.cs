@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -83,6 +85,24 @@ public sealed class MediaService : IDisposable
     public Task TogglePlayPauseAsync() => Run(s => s.TryTogglePlayPauseAsync());
     public Task NextAsync() => Run(s => s.TrySkipNextAsync());
     public Task PreviousAsync() => Run(s => s.TrySkipPreviousAsync());
+
+    /// <summary>Jump to a fraction (0..1) of the current track.</summary>
+    public Task SeekToFractionAsync(double fraction)
+    {
+        var s = Current;
+        if (s == null || s.Duration <= TimeSpan.Zero) return Task.CompletedTask;
+        long ticks = (long)(s.Duration.Ticks * Math.Clamp(fraction, 0, 1));
+        return Run(session => session.TryChangePlaybackPositionAsync(ticks));
+    }
+
+    /// <summary>Move the playhead by the given offset (e.g. +/- 10 seconds).</summary>
+    public Task SeekByAsync(TimeSpan delta)
+    {
+        var s = Current;
+        if (s == null || s.Duration <= TimeSpan.Zero) return Task.CompletedTask;
+        var target = s.EstimatePosition() + delta;
+        return SeekToFractionAsync(target.TotalSeconds / s.Duration.TotalSeconds);
+    }
 
     public void Dispose() => Detach();
 
@@ -193,23 +213,34 @@ public sealed class MediaService : IDisposable
             if (key != _artKey || _art == null)
             {
                 // Artwork often arrives a moment after the title, so keep retrying while it's missing.
-                var art = await LoadThumbnailAsync(props.Thumbnail);
+                var loaded = await LoadThumbnailAsync(props.Thumbnail);
                 _artKey = key;
-                _art = art;
-                _accent = ColorExtractor.Extract(art);
+                _art = loaded;
+                _accent = ColorExtractor.Extract(loaded);
                 if (version != _refreshVersion) return;
             }
 
             var timeline = session.GetTimelineProperties();
             string appId = session.SourceAppUserModelId ?? "";
+            string artist = string.IsNullOrWhiteSpace(props.Artist) ? props.AlbumTitle ?? "" : props.Artist;
+
+            // Browser playback (YouTube etc.) often gives no real cover art. Look up the video's
+            // thumbnail from its title, so the island shows it instead of a blank tile.
+            var art = _art;
+            if (art == null && IsBrowserApp(appId))
+            {
+                if (_titleThumb.TryGetValue(key, out var cached)) art = cached;
+                else { _titleThumb[key] = null; _ = FetchTitleThumbnailAsync(version, key, props.Title, artist); }
+            }
+
             Publish(new MediaSnapshot
             {
                 Title = props.Title,
-                Artist = string.IsNullOrWhiteSpace(props.Artist) ? props.AlbumTitle ?? "" : props.Artist,
+                Artist = artist,
                 Source = PrettifySource(appId),
                 AppId = appId,
                 IsBrowser = IsBrowserApp(appId),
-                Artwork = _art,
+                Artwork = art,
                 Accent = _accent,
                 IsPlaying = status == PlaybackStatus.Playing,
                 // The timeline can be missing while an app is closing its media session.
@@ -233,6 +264,61 @@ public sealed class MediaService : IDisposable
         _publishedOnce = true;
         Current = snapshot;
         Changed?.Invoke(snapshot, isNewTrack);
+    }
+
+    // ---------------------------------------------------------------- thumbnail-by-title (browser playback)
+
+    private static readonly HttpClient Http = CreateHttp();
+    private readonly Dictionary<string, BitmapSource?> _titleThumb = new();
+
+    private static HttpClient CreateHttp()
+    {
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+        return c;
+    }
+
+    /// <summary>Finds the top YouTube result for the track and loads its thumbnail. Best-effort.</summary>
+    private async Task FetchTitleThumbnailAsync(int version, string key, string title, string artist)
+    {
+        try
+        {
+            var query = Uri.EscapeDataString($"{title} {artist}".Trim());
+            var html = await Http.GetStringAsync($"https://www.youtube.com/results?search_query={query}");
+            var match = System.Text.RegularExpressions.Regex.Match(html, "\"videoId\":\"([A-Za-z0-9_-]{11})\"");
+            Log.Info($"Title lookup '{title}' -> videoId {(match.Success ? match.Groups[1].Value : "none")}");
+            BitmapSource? thumb = null;
+            if (match.Success)
+            {
+                foreach (var name in new[] { "maxresdefault", "hqdefault" })
+                {
+                    try
+                    {
+                        var bytes = await Http.GetByteArrayAsync($"https://i.ytimg.com/vi/{match.Groups[1].Value}/{name}.jpg");
+                        if (bytes.Length < 2000) continue;
+                        var bmp = new BitmapImage();
+                        bmp.BeginInit();
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.StreamSource = new MemoryStream(bytes);
+                        bmp.EndInit();
+                        bmp.Freeze();
+                        thumb = bmp;
+                        break;
+                    }
+                    catch { }
+                }
+            }
+            _titleThumb[key] = thumb;
+            Log.Info($"Title thumb for '{title}': {(thumb != null ? "loaded" : "none")} (version {version}/{_refreshVersion})");
+            // Re-publish with the art if this is still the current track.
+            if (thumb != null) _dispatcher.InvokeAsync(() => _ = RefreshAsync());
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Thumbnail-by-title lookup failed", ex);
+            _titleThumb[key] = null;
+        }
     }
 
     private static async Task<BitmapSource?> LoadThumbnailAsync(IRandomAccessStreamReference? reference)
