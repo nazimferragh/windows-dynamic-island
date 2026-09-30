@@ -249,10 +249,18 @@ public sealed class MediaService : IDisposable
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.DecodePixelWidth = 200;
-            bitmap.StreamSource = buffer;
+            bitmap.StreamSource = buffer; // natural size, so we can tell real cover art from an icon
             bitmap.EndInit();
             bitmap.Freeze();
+
+            // Browsers/apps that don't publish real artwork make Windows hand us their app icon
+            // (e.g. the Chrome logo). Real cover art is large; an icon is small. Drop the small ones
+            // so the island shows a clean placeholder instead of a browser logo.
+            if (Math.Min(bitmap.PixelWidth, bitmap.PixelHeight) < 128)
+            {
+                Log.Info($"Ignoring small artwork ({bitmap.PixelWidth}x{bitmap.PixelHeight}) - looks like an app icon");
+                return null;
+            }
             return bitmap;
         }
         catch (Exception ex)
