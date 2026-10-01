@@ -55,6 +55,7 @@ internal sealed class MenuBarStrip : Window
             if (_wantReserved) Reserve();
         };
         _poll.Tick += (_, _) => SetBlack(WindowApi.HasMaximizedWindowOn(MonitorRect));
+        Services.GameMode.Tune(_poll, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(10));
         _poll.Start();
         Closed += (_, _) =>
         {

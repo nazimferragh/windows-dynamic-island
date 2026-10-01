@@ -50,6 +50,12 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   - Known limit: in high priority the island runs elevated, so Windows blocks drag-and-drop from
     Explorer onto it (pinning via the "+" picker still works). Don't "fix" this by relaxing
     Windows' message filtering (UIPI); that lowers a security boundary.
+- **Light on resources, especially in games** (`GameMode`): when a full-screen app (exclusive or
+  borderless) is in front, only that screen's island hides, nothing animates, no topmost
+  re-asserting, background checks slow to 4–30 s (register new timers with `GameMode.Tune`), and
+  the process drops to below-normal priority. The hidden YouTube panel sleeps (`TrySuspendAsync`)
+  unless it's playing audio. Never add always-running per-frame work; measured target in game
+  mode: well under 1% of one core.
 - **Feels native.** `WindowsTheme` reads the accent color (`UISettings`: the taskbar/Start accent,
   not the DWM title-bar one) and light/dark mode, live. `AppSettings` + `SettingsWindow` (Windows 11
   Settings look, Mica on 22621+, solid on Windows 10) control every feature, applied instantly.

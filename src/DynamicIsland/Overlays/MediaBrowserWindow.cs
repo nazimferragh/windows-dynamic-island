@@ -80,6 +80,44 @@ internal sealed class MediaBrowserWindow : Window
     private Int32Rect _monitor;
 
     /// <summary>Opens the panel under the given monitor's notch, or tucks it away if already open there.</summary>
+    /// <summary>
+    /// A hidden, silent YouTube panel goes to sleep (no CPU, less memory) a few seconds after it's
+    /// closed; it wakes up by itself the moment it's shown again. Audio playing in the background
+    /// keeps it awake, and it sleeps once that stops.
+    /// </summary>
+    private async System.Threading.Tasks.Task SleepWhenHiddenAsync()
+    {
+        try
+        {
+            var core = _ready ? _web.CoreWebView2 : null;
+            if (core == null) return;
+            if (IsVisible)
+            {
+                core.MemoryUsageTargetLevel = Microsoft.Web.WebView2.Core.CoreWebView2MemoryUsageTargetLevel.Normal;
+                return;
+            }
+            await System.Threading.Tasks.Task.Delay(3000);
+            if (IsVisible || !_ready) return;
+            if (core.IsDocumentPlayingAudio)
+            {
+                if (!_sleepWatch)
+                {
+                    _sleepWatch = true;
+                    core.IsDocumentPlayingAudioChanged += (_, _) => { if (!IsVisible && !core.IsDocumentPlayingAudio) _ = SleepWhenHiddenAsync(); };
+                }
+                return;
+            }
+            core.MemoryUsageTargetLevel = Microsoft.Web.WebView2.Core.CoreWebView2MemoryUsageTargetLevel.Low;
+            await core.TrySuspendAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Info($"YouTube panel couldn't go to sleep: {ex.Message}");
+        }
+    }
+
+    private bool _sleepWatch;
+
     public static void Toggle(Int32Rect monitor)
     {
         _instance ??= new MediaBrowserWindow();
@@ -130,6 +168,7 @@ internal sealed class MediaBrowserWindow : Window
 
     private MediaBrowserWindow()
     {
+        IsVisibleChanged += (_, _) => _ = SleepWhenHiddenAsync();
         Title = "Search & play";
         Width = _dipWidth;
         Height = _dipHeight;

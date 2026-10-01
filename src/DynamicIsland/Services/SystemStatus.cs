@@ -79,6 +79,7 @@ public sealed class SystemStatus
             ReadBattery();
             Changed?.Invoke();
         };
+        GameMode.Tune(_poll, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(30));
         _poll.Start();
 
         ReadBattery();

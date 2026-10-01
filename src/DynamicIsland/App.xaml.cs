@@ -238,6 +238,7 @@ public partial class App : Application
         AppSettings.Changed += OnSettingsChanged;
         _lastAllMonitors = AppSettings.Current.ShowOnAllMonitors;
         EdgeSnapping.Apply(AppSettings.Current.SnapLayoutsEnabled);
+        GameMode.Start();
         SessionEnding += (_, _) =>
         {
             Guardian.SignalQuit(); // signing out or shutting down isn't a crash
@@ -267,7 +268,9 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
-        EdgeSnapping.Release();
+        // Only the copy that runs the island gives Windows' snapping back: the extra launches
+        // (the every-minute safety task, opening the app again) exit at once and must not.
+        if (_ownsMutex) EdgeSnapping.Release();
         _dragWatcher?.Dispose();
         _downloads?.Dispose();
         if (_hotkeySink != null)

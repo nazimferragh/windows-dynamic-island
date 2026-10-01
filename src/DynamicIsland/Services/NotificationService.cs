@@ -60,6 +60,7 @@ public sealed class NotificationService
                 if (++_pollCount % 10 == 0 && AppSettings.Current.ShouldHideBanners) NotificationBanners.HideAll();
                 await PollAsync();
             };
+            GameMode.Tune(_poll, TimeSpan.FromMilliseconds(1200), TimeSpan.FromSeconds(4));
             _poll.Start();
             await PollAsync(); // prime the "seen" set without animating existing ones
         }

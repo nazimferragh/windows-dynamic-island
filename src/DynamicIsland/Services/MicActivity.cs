@@ -43,6 +43,7 @@ public sealed class MicActivity
     private MicActivity()
     {
         _poll.Tick += (_, _) => Poll();
+        Services.GameMode.Tune(_poll, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
         _poll.Start();
         Poll();
     }

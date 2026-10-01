@@ -53,6 +53,7 @@ public sealed class WindowVault
     public WindowVault()
     {
         _sweep.Tick += (_, _) => Sweep();
+        GameMode.Tune(_sweep, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10));
         _sweep.Start();
 
         // Each virtual desktop has its own black hole: refresh the shelf when the user switches.
@@ -63,6 +64,7 @@ public sealed class WindowVault
             _currentDesktop = desktop;
             Changed?.Invoke();
         };
+        GameMode.Tune(_desktopPoll, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(10));
         _desktopPoll.Start();
     }
 

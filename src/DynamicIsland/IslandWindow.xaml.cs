@@ -170,6 +170,9 @@ public partial class IslandWindow : Window
         };
         _tickTimer.Tick += (_, _) => OnTick();
         _watchdogTimer.Tick += (_, _) => Watchdog();
+        GameMode.Tune(_watchdogTimer, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
+        GameMode.Changed += OnGameModeChanged;
+        Closed += (_, _) => GameMode.Changed -= OnGameModeChanged;
 
         _media.Changed += OnMediaChanged;
         _vault.Changed += OnVaultChanged;
@@ -443,7 +446,9 @@ public partial class IslandWindow : Window
         Reveal(PeekText, _state == State.Peek && hasMedia && !dlActive && !live, animate);
         Reveal(ClosedVault, closed && !closedMedia && !dlActive && !live && _visibleItems.Count > 0, animate);
         LiveSection.Visibility = _state == State.Open && live && !ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
-        SetLiveAnimating(live && (closed || _state == State.Open));
+        // In game mode nothing animates on its own: every redraw of an island costs the game frames.
+        bool calm = GameMode.Active;
+        SetLiveAnimating(live && !calm && (closed || _state == State.Open));
         bool hintOn = _state == State.Attract && _capture;
         if (hintOn != _dropHintShown)
         {
@@ -462,11 +467,11 @@ public partial class IslandWindow : Window
         AppsGlyphPath.Fill = _appsView ? Brushes.White : (Brush)FindResource("SecondaryText");
         DownloadsSection.Visibility = _state == State.Open && !ListPanelShown && DownloadsShown && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ShelfSection.Visibility = _state == State.Open && !ListPanelShown && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        SetDownloadArrowAnimating(closed && dlActive);
+        SetDownloadArrowAnimating(closed && dlActive && !calm);
 
         bool playing = _snapshot?.IsPlaying == true;
-        ClosedEq.IsPlaying = playing && closed && !dlActive;
-        OpenEq.IsPlaying = playing && _state == State.Open;
+        ClosedEq.IsPlaying = playing && closed && !dlActive && !calm;
+        OpenEq.IsPlaying = playing && _state == State.Open && !calm;
 
         if (_state == State.Open)
         {
@@ -1709,8 +1714,8 @@ public partial class IslandWindow : Window
 
     private void Watchdog()
     {
-        bool fullscreen = AppSettings.Current.HideOverFullscreen && (NativeMethods.IsExclusiveFullscreenOrPresenting()
-            || NativeMethods.IsFullscreenWindowOn(_monitor.X, _monitor.Y, _monitor.Width, _monitor.Height));
+        // Only the island on the full-screen app's own screen steps aside; the others stay.
+        bool fullscreen = AppSettings.Current.HideOverFullscreen && GameMode.IsOn(_monitor);
         if (fullscreen != _fullscreenHidden)
         {
             _fullscreenHidden = fullscreen;
@@ -1718,8 +1723,15 @@ public partial class IslandWindow : Window
         }
 
         // Other always-on-top windows can end up above us; quietly reclaim the top spot.
-        if (IsVisible && _hwnd != IntPtr.Zero) NativeMethods.BringToTopmost(_hwnd);
+        // (Not while a game runs: re-ordering topmost windows every second can hitch its frames.)
+        if (IsVisible && _hwnd != IntPtr.Zero && !GameMode.Active) NativeMethods.BringToTopmost(_hwnd);
         if (IsVisible) KeepCentered();
+    }
+
+    private void OnGameModeChanged()
+    {
+        Watchdog();
+        ApplyState(animate: false);
     }
 
     private void UpdateVisibility()

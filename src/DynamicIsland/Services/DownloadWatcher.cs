@@ -66,6 +66,7 @@ public sealed class DownloadWatcher : IDisposable
         }
 
         _poll.Tick += (_, _) => Poll();
+        Services.GameMode.Tune(_poll, TimeSpan.FromMilliseconds(1000), TimeSpan.FromSeconds(6));
         _poll.Start();
     }
 

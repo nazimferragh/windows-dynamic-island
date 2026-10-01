@@ -87,8 +87,8 @@ public sealed class Equalizer : StackPanel
                     BeginTime = TimeSpan.FromMilliseconds(i * 90),
                     EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
                 };
-                // The bars don't need 60+ fps; keep the idle CPU cost down.
-                Timeline.SetDesiredFrameRate(animation, 30);
+                // The bars don't need 60+ fps; every frame redraws the island window, so keep it low.
+                Timeline.SetDesiredFrameRate(animation, 24);
             }
             else
             {
