@@ -22,17 +22,15 @@ internal sealed class SnapPreview : Window
     private readonly WindowApi.RECT _work;
     private readonly Canvas _canvas = new();
     private readonly Border _box = new() { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(2), Opacity = 0 };
-    private readonly List<Border> _others = new();
-    private readonly Color _accent;
+    private readonly List<FrameworkElement> _others = new();
     private readonly Axis _x = new(), _y = new(), _w = new(), _h = new();
     private IntPtr _hwnd;
     private bool _shown, _running;
     private TimeSpan _lastFrame;
 
-    public SnapPreview(WindowApi.RECT work, Color accent)
+    public SnapPreview(WindowApi.RECT work)
     {
         _work = work;
-        _accent = accent;
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
@@ -40,9 +38,10 @@ internal sealed class SnapPreview : Window
         ShowInTaskbar = true; // tool-window style below hides the button; keeps it on the current desktop
         ShowActivated = false;
         Topmost = true;
-        _box.BorderBrush = new SolidColorBrush(accent);
-        _box.Background = new SolidColorBrush(Color.FromArgb(0x40, accent.R, accent.G, accent.B));
-        _box.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 30, ShadowDepth = 8, Opacity = 0.35, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance };
+        // As in the approved preview: a white outline over a light frosted fill.
+        _box.CornerRadius = new CornerRadius(10);
+        _box.BorderBrush = new SolidColorBrush(Color.FromArgb(0xE6, 0xFF, 0xFF, 0xFF));
+        _box.Background = new SolidColorBrush(Color.FromArgb(0x29, 0xFF, 0xFF, 0xFF));
         _canvas.Children.Add(_box);
         Content = _canvas;
         SourceInitialized += (_, _) =>
@@ -101,14 +100,17 @@ internal sealed class SnapPreview : Window
         foreach (var zone in others)
         {
             var r = ToLocal(zone);
-            var ghost = new Border
+            // Where the most recent window will go: dashed, like the preview.
+            var ghost = new System.Windows.Shapes.Rectangle
             {
                 Width = r.Width,
                 Height = r.Height,
-                CornerRadius = new CornerRadius(12),
-                BorderThickness = new Thickness(1.5),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x70, _accent.R, _accent.G, _accent.B)),
-                Background = new SolidColorBrush(Color.FromArgb(0x14, _accent.R, _accent.G, _accent.B)),
+                RadiusX = 10,
+                RadiusY = 10,
+                StrokeThickness = 2,
+                StrokeDashArray = new DoubleCollection { 4, 3 },
+                Stroke = new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF)),
+                Fill = new SolidColorBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF)),
                 Opacity = 0,
             };
             Canvas.SetLeft(ghost, r.X);

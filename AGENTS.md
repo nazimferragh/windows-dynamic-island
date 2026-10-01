@@ -63,14 +63,12 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 - **Eating is drag-and-drop, no hold** (owner's request, as in the preview): dragging a window
   near the island grows it; in the zone under it a "Let go to tuck it away" pill shows; releasing
   eats it at once. Nothing else may pop up over the island during that drag.
-- **Snap layouts live in the island's drop panel**, which now only opens while **Shift** is held
-  during the drag (or when the black hole is off). Where snap layouts should really live is still
-  open with the owner (`WindowSnapper`, `SnapPreview`): six layouts
-  around the black hole, Windows' own snap bar/preview stay off. On portrait monitors every layout
-  is transposed (halves → top/bottom). Works on Windows 10 too (which has no snap layouts).
-  Aiming is forgiving: the panel is split into one column per tile and the cursor's position inside
-  it picks the zone (`AimSnap`, with hysteresis); the aimed tile grows and shows which zones
-  auto-fill will use, and the dropped window glides into place (`WindowSnapper.Glide`).
+- **Snap layouts = edges and corners** (owner chose option C in the Black Hole Lab preview): no
+  panel. Left/right edge → half, corner → quarter, top beside the island → full screen; the top
+  middle is always the black hole's. White outline + dashed other half (`SnapPreview`), the window
+  glides in, the most recent other window takes the other half (`SnapAutoFill`). Windows' own
+  drag-to-edge docking is paused for the session while this is on (`EdgeSnapping`, never saved,
+  given back on quit/crash/setting off; Win+arrows still work). Works on Windows 10 and 11.
 - **Hover to open**: hovering Wi‑Fi, Bluetooth or Apps in the open island opens it at once (90 ms,
   only to ignore the pointer passing through; Settings waits 450 ms since it leaves the island).
   The owner wants it instant; don't add a visible countdown. A click right after a hover-open

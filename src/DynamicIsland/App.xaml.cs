@@ -237,6 +237,7 @@ public partial class App : Application
         _ = WindowsTheme.Current; // start listening for accent/light-dark changes
         AppSettings.Changed += OnSettingsChanged;
         _lastAllMonitors = AppSettings.Current.ShowOnAllMonitors;
+        EdgeSnapping.Apply(AppSettings.Current.SnapLayoutsEnabled);
         SessionEnding += (_, _) =>
         {
             Guardian.SignalQuit(); // signing out or shutting down isn't a crash
@@ -266,6 +267,7 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
+        EdgeSnapping.Release();
         _dragWatcher?.Dispose();
         _downloads?.Dispose();
         if (_hotkeySink != null)
@@ -447,6 +449,7 @@ public partial class App : Application
             _lastAllMonitors = s.ShowOnAllMonitors;
             CreateIslands();
         }
+        EdgeSnapping.Apply(s.SnapLayoutsEnabled);
         // Never leave the user without notifications: banners are hidden only while the island shows them.
         if (s.ShouldHideBanners) NotificationBanners.HideAll();
         else NotificationBanners.RestoreAll();
@@ -518,6 +521,7 @@ public partial class App : Application
         try
         {
             _vault?.RestoreAll();
+            EdgeSnapping.Release();
             foreach (var island in _islands)
             {
                 island.ReleaseCursor();

@@ -296,8 +296,8 @@ internal sealed class SettingsWindow : Window
             case "Black hole":
                 Toggle("Drag windows into the island", "Hold a window over the island to tuck it away; hover the island to get it back", s.BlackHoleEnabled, v => AppSettings.Update(x => x.BlackHoleEnabled = v));
                 Toggle("Ctrl + Alt + Z", "Throws the active window into the island", s.AbsorbShortcutEnabled, v => AppSettings.Update(x => x.AbsorbShortcutEnabled = v));
-                Toggle("Snap layouts in the island", "Drag a window up to the island and drop it on a layout to arrange it", s.SnapLayoutsEnabled, v => AppSettings.Update(x => x.SnapLayoutsEnabled = v));
-                Toggle("Fill the rest of the layout", "Your next most recent windows fill the other zones automatically", s.SnapAutoFill, v => AppSettings.Update(x => x.SnapAutoFill = v));
+                Toggle("Snap to edges and corners", "Drag a window to the left or right edge for a half, a corner for a quarter, the top beside the island for full screen", s.SnapLayoutsEnabled, v => AppSettings.Update(x => x.SnapLayoutsEnabled = v));
+                Toggle("Fill the other half", "When you snap a window to a half, your most recent other window takes the other half", s.SnapAutoFill, v => AppSettings.Update(x => x.SnapAutoFill = v));
                 break;
             case "Downloads":
                 Toggle("Show downloads in the island", "Progress while downloading; click a finished one to open it", s.DownloadsEnabled, v => AppSettings.Update(x => x.DownloadsEnabled = v));
