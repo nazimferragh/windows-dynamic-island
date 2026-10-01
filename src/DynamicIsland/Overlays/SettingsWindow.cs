@@ -283,6 +283,7 @@ internal sealed class SettingsWindow : Window
             case "Now playing":
                 Toggle("Show a preview when a new song starts", "The island briefly shows the song's name", s.ShowSongPreview, v => AppSettings.Update(x => x.ShowSongPreview = v));
                 Toggle("Show the song in the closed island", "Artwork and moving bars while music plays", s.ShowClosedMedia, v => AppSettings.Update(x => x.ShowClosedMedia = v));
+                Toggle("Block and skip ads in Search & play", "In the island's own YouTube player: ads are removed, skipped or muted, and ad boxes hidden", s.BlockYouTubeAds, v => AppSettings.Update(x => x.BlockYouTubeAds = v));
                 Hint("Click the artwork in the open island to keep watching the song in the island's player.");
                 break;
             case "Notifications":

@@ -299,6 +299,57 @@ internal sealed class MediaBrowserWindow : Window
     // Runs exactly once, no matter how many times it's called (window-create and first open both call it).
     private System.Threading.Tasks.Task InitWebViewAsync() => _initTask ??= DoInitWebViewAsync();
 
+    /// <summary>Ad and tracking servers YouTube pages call; refused while ad blocking is on.</summary>
+    private static readonly string[] AdServerPatterns =
+    {
+        "*://*.doubleclick.net/*",
+        "*://*.googlesyndication.com/*",
+        "*://*.googleadservices.com/*",
+        "*://*.google-analytics.com/*",
+        "*://www.youtube.com/pagead/*",
+        "*://www.youtube.com/api/stats/ads*",
+        "*://www.youtube.com/ptracking*",
+        "*://www.youtube.com/get_midroll_*",
+        "*://*.youtube.com/youtubei/v1/log_event*",
+    };
+
+    private string? _adBlockScriptId;
+    private bool _adBlockOn;
+    private bool _adBlockConfirmed;
+
+    private static readonly Lazy<string> AdBlockScript = new(() =>
+    {
+        using var stream = typeof(MediaBrowserWindow).Assembly.GetManifestResourceStream("YouTubeAdBlock.js");
+        if (stream == null) return "";
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    });
+
+    /// <summary>Adds or removes the ad-blocking page script to match the setting (reloading the page when it changes).</summary>
+    private async System.Threading.Tasks.Task ApplyAdBlockAsync(bool reload)
+    {
+        if (_web.CoreWebView2 == null) return;
+        bool want = AppSettings.Current.BlockYouTubeAds;
+        if (want == _adBlockOn && (_adBlockScriptId != null) == want) return;
+        try
+        {
+            if (want && _adBlockScriptId == null && AdBlockScript.Value.Length > 0)
+                _adBlockScriptId = await _web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(AdBlockScript.Value);
+            else if (!want && _adBlockScriptId != null)
+            {
+                _web.CoreWebView2.RemoveScriptToExecuteOnDocumentCreated(_adBlockScriptId);
+                _adBlockScriptId = null;
+            }
+            _adBlockOn = want;
+            Log.Info($"YouTube ad blocking {(want ? "on" : "off")}");
+            if (reload) _web.CoreWebView2.Reload();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Couldn't change YouTube ad blocking", ex);
+        }
+    }
+
     private async System.Threading.Tasks.Task DoInitWebViewAsync()
     {
         try
@@ -318,10 +369,31 @@ internal sealed class MediaBrowserWindow : Window
             // Hide YouTube's own top bar (logo + search + sign-in) so only the island's search box
             // drives it. Runs both before page scripts and after each load finishes (YouTube is an SPA).
             await _web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HideMastheadScript);
+
+            // Ads: blocked and skipped (Settings › Now playing). The page script strips and skips ads;
+            // requests to ad servers are refused here.
+            await ApplyAdBlockAsync(reload: false);
+            foreach (var pattern in AdServerPatterns)
+                _web.CoreWebView2.AddWebResourceRequestedFilter(pattern, CoreWebView2WebResourceContext.All);
+            _web.CoreWebView2.WebResourceRequested += (_, e) =>
+            {
+                if (!AppSettings.Current.BlockYouTubeAds) return;
+                e.Response = _web.CoreWebView2.Environment.CreateWebResourceResponse(null, 403, "Blocked", "");
+            };
+            AppSettings.Changed += () => Dispatcher.InvokeAsync(() => _ = ApplyAdBlockAsync(reload: true));
             _web.CoreWebView2.NavigationCompleted += async (_, _) =>
             {
                 try { await _web.CoreWebView2.ExecuteScriptAsync(HideMastheadScript); } catch { }
                 _ = UpdateNowPlayingAsync();
+                if (_adBlockOn && !_adBlockConfirmed)
+                {
+                    try
+                    {
+                        _adBlockConfirmed = await _web.CoreWebView2.ExecuteScriptAsync("!!window.__islandAdBlock") == "true";
+                        Log.Info($"YouTube ad blocking active in the page: {_adBlockConfirmed}");
+                    }
+                    catch { }
+                }
             };
             // SPA navigations (clicking a video) don't reload the document, so also watch the URL.
             _web.CoreWebView2.SourceChanged += (_, _) => _ = UpdateNowPlayingAsync();

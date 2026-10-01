@@ -23,6 +23,7 @@ public sealed class AppSettings
     // Now playing
     public bool ShowSongPreview { get; set; } = true;
     public bool ShowClosedMedia { get; set; } = true;
+    public bool BlockYouTubeAds { get; set; } = true;
 
     // Notifications
     public bool NotificationsInIsland { get; set; } = true;

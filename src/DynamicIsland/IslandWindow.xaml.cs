@@ -1945,6 +1945,7 @@ public partial class IslandWindow : Window
             case "wifi": ToggleWifiView(); break;
             case "bluetooth": ToggleBluetoothView(); break;
             case "apps": _appsView = true; ApplyState(animate: true); break;
+            case "search": SetState(State.Closed); MediaBrowserWindow.Toggle(_monitor); break;
             default: ApplyState(animate: true); break;
         }
     }

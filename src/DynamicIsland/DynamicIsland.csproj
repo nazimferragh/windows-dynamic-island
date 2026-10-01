@@ -27,6 +27,8 @@
 
   <ItemGroup>
     <Resource Include="..\..\assets\icon.ico" Link="Assets\icon.ico" />
+    <!-- Ad blocking/skipping for the island's YouTube panel (injected into the page). -->
+    <EmbeddedResource Include="Overlays\YouTubeAdBlock.js" LogicalName="YouTubeAdBlock.js" />
   </ItemGroup>
 
   <ItemGroup>
