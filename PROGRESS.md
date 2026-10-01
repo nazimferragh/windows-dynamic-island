@@ -13,9 +13,14 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `42b094c` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `0f5f4b8` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **Game mode** (`0f5f4b8`, owner saw FIFA hitches + island vanishing): full-screen app in front →
+  only that screen's island hides, no animations/topmost churn, slow polls, below-normal priority;
+  YouTube panel sleeps when hidden + silent. Measured 4.3% → 0.63% of one core (test full-screen
+  window). Also fixed: extra launches were giving Windows' snapping back. **Owner should re-test FIFA.**
+  Idea not done: shrink the 760×370 island windows (each music-bar frame redraws the whole window).
 - **Snap layouts = edges & corners** (`42b094c`, owner picked option C in the preview): halves at the
   side edges, quarters in corners, full screen at the top beside the island; drop panel removed;
   Windows' docking paused per session (verified SPI value 0 + log). **The drag itself was not
@@ -128,6 +133,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
 - 2026-10-01 · 42b094c · Snap layouts as edges & corners (option C), drop panel removed, Windows docking paused per session · pushed, deployed
 - 2026-10-01 · 4312b52 · Smoother black hole (no per-frame shadow, background snapshot); windows come back on the clicked island's screen · pushed, deployed
 - 2026-10-01 · 9a47ceb · Drop-to-eat like the preview; snap panel only with Shift · pushed, deployed
