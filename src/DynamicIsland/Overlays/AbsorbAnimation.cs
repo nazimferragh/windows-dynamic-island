@@ -40,6 +40,12 @@ internal abstract class FlightOverlay : Window
     protected readonly SolidColorBrush VeilBrush = new(Color.FromRgb(10, 6, 22));
     /// <summary>The overlay's canvas, for extra drawings (the accretion disk) under the snapshot.</summary>
     protected readonly Canvas Stage = new();
+    /// <summary>The window's soft shadow, which tightens as it shrinks into the island.</summary>
+    protected readonly System.Windows.Media.Effects.DropShadowEffect Shadow = new()
+    {
+        Color = Colors.Black, Direction = 270, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance,
+    };
+    private readonly RectangleGeometry _clip = new();
 
     protected FlightOverlay(string name, BitmapSource? snapshot, WindowApi.RECT home, WindowApi.RECT extent, double dpiScale, TimeSpan duration)
     {
@@ -82,13 +88,15 @@ internal abstract class FlightOverlay : Window
         {
             face = new Border { Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)) };
         }
-        Visual = new Border
+        // Only the snapshot is cached as a bitmap: the veil, clip, shadow and transform change every
+        // frame without re-rendering it.
+        face.CacheMode = new BitmapCache { RenderAtScale = 1 };
+        Visual = new Grid
         {
-            CornerRadius = new CornerRadius(8),
-            ClipToBounds = true,
-            Child = new Grid { Children = { face, Veil } },
+            Children = { face, Veil },
             RenderTransform = Transform,
-            CacheMode = new BitmapCache { RenderAtScale = 1 },
+            Clip = _clip,
+            Effect = Shadow,
         };
         Stage.Children.Add(Visual);
         Content = Stage;
@@ -182,6 +190,45 @@ internal abstract class FlightOverlay : Window
     /// <summary>Places the snapshot for progress t (0..1).</summary>
     protected abstract void Apply(double t);
 
+    /// <summary>The island's live outline (physical pixels), for the morph's target.</summary>
+    internal Func<Rect>? IslandRect { get; set; }
+
+    /// <summary>Draws the morph at progress k (see <see cref="Morph.At"/>).</summary>
+    internal void DrawMorph(double k)
+    {
+        var island = IslandRect?.Invoke() ?? Rect.Empty;
+        if (island.IsEmpty) return;
+        var home = new Rect(Home.Left, Home.Top, Home.Width, Home.Height);
+        var (rect, radius, black, shadowK) = Morph.At(k, home, island, Scale);
+        PlaceRect(rect, radius);
+        Veil.Opacity = black;
+        SetShadow(shadowK);
+    }
+
+    /// <summary>The shadow tightens and lightens as the window shrinks into the island (0 = full, 1 = none).</summary>
+    protected void SetShadow(double k)
+    {
+        k = Math.Clamp(k, 0, 1);
+        Shadow.ShadowDepth = 18 - 16 * k;
+        Shadow.BlurRadius = 50 - 44 * k;
+        Shadow.Opacity = 0.45 - 0.25 * k;
+    }
+
+    /// <summary>
+    /// Shows the snapshot filling a screen rectangle (physical pixels) with rounded corners of the
+    /// given radius (DIPs on screen; kept round whatever the scale), via one transform.
+    /// </summary>
+    protected void PlaceRect(Rect target, double radius)
+    {
+        double s = Scale, w = W, h = H;
+        double sx = Math.Max(1e-4, target.Width / s / w), sy = Math.Max(1e-4, target.Height / s / h);
+        double x = (target.X - Home.Left) / s, y = (target.Y - Home.Top) / s;
+        Transform.Matrix = new Matrix(sx, 0, 0, sy, x, y);
+        _clip.Rect = new Rect(0, 0, w, h);
+        _clip.RadiusX = radius / sx;
+        _clip.RadiusY = radius / sy;
+    }
+
     /// <summary>Scale (sx, sy) and rotation (degrees) around the snapshot's center, then its center moved to (cx, cy).</summary>
     protected void Place(double cx, double cy, double sx, double sy, double degrees)
     {
@@ -217,213 +264,131 @@ internal abstract class FlightOverlay : Window
 }
 
 /// <summary>
-/// The island sucking a window in like a vacuum (the "genie" effect, into the notch). The
-/// snapshot is one smooth surface (a GPU mesh, so the edges curve cleanly with no steps or seams
-/// and the corners stay rounded); its rows are pulled in one after another: the rows nearest the
-/// island go first and the rest follow, each accelerating. So the window pinches into a neck at
-/// the island's mouth and pours up through it into the black. Run backwards, the same funnel pours
-/// a window back out of the island.
+/// The motion the owner picked in the Black Hole Lab preview (style A "Morph", speed 1.05,
+/// bounce 0.60): the window slides and shrinks into the island's own black pill, its colour
+/// draining to black on the way, so it becomes part of the island. Coming out is the same path
+/// backwards on a spring, with a little overshoot. Keep these curves in step with the preview.
 /// </summary>
-internal sealed class Funnel
+internal static class Morph
 {
-    private const int Rows = 90, Cols = 18;
+    public static readonly TimeSpan Duration = TimeSpan.FromMilliseconds(520 / 1.05);
+    private const double Bounce = 0.60;
 
-    private readonly Viewport3D _view = new() { IsHitTestVisible = false, ClipToBounds = false };
-    private readonly OrthographicCamera _camera = new() { LookDirection = new Vector3D(0, 0, -1), UpDirection = new Vector3D(0, 1, 0) };
-    private readonly MeshGeometry3D _mesh = new();
-    private readonly Canvas _stage;
-    private readonly double[] _y = new double[Rows + 1], _w = new double[Rows + 1], _x = new double[Rows + 1];
-    private Size _size;
+    private static double Clamp01(double v) => Math.Clamp(v, 0, 1);
 
-    public Funnel(Canvas stage, BitmapSource? snapshot)
+    public static double Smooth(double a, double b, double x)
     {
-        _stage = stage;
-        var indices = new Int32Collection(Rows * Cols * 6);
-        var uv = new PointCollection((Rows + 1) * (Cols + 1));
-        for (int r = 0; r <= Rows; r++)
-            for (int c = 0; c <= Cols; c++)
-                uv.Add(new Point((double)c / Cols, (double)r / Rows));
-        for (int r = 0; r < Rows; r++)
-            for (int c = 0; c < Cols; c++)
-            {
-                int a = r * (Cols + 1) + c, b = a + 1, d = a + Cols + 1, e = d + 1;
-                indices.Add(a); indices.Add(d); indices.Add(b);
-                indices.Add(b); indices.Add(d); indices.Add(e);
-            }
-        indices.Freeze();
-        uv.Freeze();
-        _mesh.TriangleIndices = indices;
-        _mesh.TextureCoordinates = uv;
-
-        Brush face = snapshot == null ? new SolidColorBrush(Color.FromRgb(28, 28, 30)) : new ImageBrush(Rounded(snapshot)) { Stretch = Stretch.Fill };
-        RenderOptions.SetBitmapScalingMode(face, BitmapScalingMode.HighQuality);
-        face.Freeze();
-        // Emissive-style: full brightness from ambient white light, no shading.
-        var material = new DiffuseMaterial(face);
-        var model = new GeometryModel3D(_mesh, material) { BackMaterial = material };
-        var group = new Model3DGroup();
-        group.Children.Add(new AmbientLight(Colors.White));
-        group.Children.Add(model);
-        _view.Camera = _camera;
-        _view.Children.Add(new ModelVisual3D { Content = group });
-        RenderOptions.SetEdgeMode(_view, EdgeMode.Unspecified); // anti-aliased edges
-        stage.Children.Add(_view);
+        double k = Clamp01((x - a) / (b - a));
+        return k * k * (3 - 2 * k);
     }
 
-    /// <summary>The snapshot with the window's rounded corners baked in (once, before the animation).</summary>
-    private static BitmapSource Rounded(BitmapSource src)
+    /// <summary>Into the island: a critically damped spring, normalised to land exactly at t = 1.</summary>
+    public static double Settle(double t)
     {
-        int w = src.PixelWidth, h = src.PixelHeight;
-        double radius = Math.Clamp(w * 0.012, 6, 14);
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
-        {
-            dc.PushClip(new RectangleGeometry(new Rect(0, 0, w, h), radius, radius));
-            dc.DrawImage(src, new Rect(0, 0, w, h));
-        }
-        var bitmap = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(visual);
-        bitmap.Freeze();
-        return bitmap;
+        const double w = 8;
+        static double F(double x) => 1 - (1 + w * x) * Math.Exp(-w * x);
+        return Clamp01(F(t) / F(1));
     }
 
-    private static double Smooth(double x) => x * x * x * (x * (x * 6 - 15) + 10); // smootherstep
+    /// <summary>Out of the island: an underdamped spring (the bounce), exact at t = 1.</summary>
+    public static double Springy(double t)
+    {
+        if (t >= 1) return 1;
+        double z = 1 + (0.55 - 1) * Bounce, w = 11;
+        double wd = w * Math.Sqrt(Math.Max(1e-4, 1 - z * z));
+        double v = 1 - Math.Exp(-z * w * t) * (Math.Cos(wd * t) + z * w / wd * Math.Sin(wd * t));
+        return v + (1 - v) * Smooth(0.82, 1, t);
+    }
 
     /// <summary>
-    /// Draws the funnel at suction progress t (0 = the window untouched, 1 = all of it inside).
-    /// Window and mouth in stage DIPs; the mouth is the island's center, its width the opening.
+    /// Where the window is at morph progress k (0 = its own spot, 1 = the island's pill; slightly
+    /// below 0 while it overshoots on the way out). Rects in physical pixels; radius in DIPs.
     /// </summary>
-    public void Apply(double t, Rect window, Point mouth, double mouthWidth)
+    public static (Rect Rect, double Radius, double Black, double ShadowK) At(double k, Rect window, Rect island, double scale)
     {
-        var size = new Size(_stage.ActualWidth, _stage.ActualHeight);
-        if (size != _size && size.Width > 0)
-        {
-            _size = size;
-            _view.Width = size.Width;
-            _view.Height = size.Height;
-            _camera.Width = size.Width;
-            _camera.Position = new Point3D(size.Width / 2, -size.Height / 2, 10);
-        }
-
-        // Each row has its own clock: the top row (nearest the island) goes first, the bottom row
-        // last. A row narrows a little ahead of rising, which forms the neck; everything eases, so
-        // the outline is one smooth curve at every moment.
-        const double lag = 0.5;
-        double cx0 = window.Left + window.Width / 2;
-        for (int r = 0; r <= Rows; r++)
-        {
-            double v = (double)r / Rows;
-            double p = Math.Clamp((t - lag * Smooth(v)) / (1 - lag), 0, 1);
-            double rise = Math.Pow(p, 1.6);                   // gentle start, quick finish: a pull
-            // A row narrows as it nears the mouth (not before), so the neck always reaches up into
-            // the island instead of shrinking into a stub on its own.
-            double narrow = 1 - Math.Pow(1 - rise, 2.4);
-            double deep = Smooth(Math.Clamp((rise - 0.75) / 0.25, 0, 1)); // inside the island, a thread
-            double y0 = window.Top + v * window.Height;
-            _y[r] = y0 + (mouth.Y - y0) * rise;
-            _w[r] = (window.Width + (mouthWidth - window.Width) * narrow) * (1 - 0.85 * deep);
-            _x[r] = cx0 + (mouth.X - cx0) * Smooth(Math.Min(1, rise * 1.5));
-        }
-
-        var positions = new Point3DCollection((Rows + 1) * (Cols + 1));
-        for (int r = 0; r <= Rows; r++)
-        {
-            double left = _x[r] - _w[r] / 2, step = _w[r] / Cols, y = -_y[r];
-            for (int c = 0; c <= Cols; c++) positions.Add(new Point3D(left + step * c, y, 0));
-        }
-        positions.Freeze();
-        _mesh.Positions = positions;
+        // Position travels a touch ahead of size, so it reads as being drawn in, not just shrinking.
+        double kp = Math.Min(1, k * 1.08), ks = k;
+        var r = new Rect(
+            window.X + (island.X - window.X) * kp,
+            window.Y + (island.Y - window.Y) * kp,
+            Math.Max(1, window.Width + (island.Width - window.Width) * ks),
+            Math.Max(1, window.Height + (island.Height - window.Height) * ks));
+        double islandH = island.Height / scale;
+        double radius = 9 + (islandH * 0.45 - 9) * Smooth(0, 0.8, k);
+        return (r, radius, Smooth(0.12, 0.62, k), Clamp01(k));
     }
 }
 
-/// <summary>The island eats a window: sucked up through its mouth like a vacuum, into the black.</summary>
+/// <summary>The island eats a window: it morphs into the island's black pill and merges with it.</summary>
 internal sealed class AbsorbAnimation : FlightOverlay
 {
-    private readonly Point _mouth;
-    private readonly Funnel _funnel;
-
     /// <param name="windowRect">Visible bounds of the window, physical pixels.</param>
-    /// <param name="target">The island's mouth (center of the notch), physical pixels.</param>
-    /// <param name="dpiScale">Scale of the monitor it's on.</param>
-    public AbsorbAnimation(BitmapSource? snapshot, WindowApi.RECT windowRect, Point target, double dpiScale)
-        : base("Absorb", snapshot, windowRect, PointRect(target), dpiScale, TimeSpan.FromMilliseconds(600))
+    /// <param name="island">The island's live outline (physical pixels); it opens up while eating.</param>
+    public AbsorbAnimation(BitmapSource? snapshot, WindowApi.RECT windowRect, Func<Rect> island, double dpiScale)
+        : base("Absorb", snapshot, windowRect, ToRect(island()), dpiScale, Morph.Duration)
     {
-        _mouth = target;
-        Visual.Visibility = Visibility.Hidden;
-        _funnel = new Funnel(Stage, snapshot == null ? null : Downscale(snapshot));
+        IslandRect = island;
+        VeilBrush.Color = Colors.Black;
     }
 
-    /// <summary>How wide the island's mouth opens while it eats (DIPs).</summary>
-    public const double MouthWidth = 150;
-
-    protected override void Apply(double t)
+    internal static WindowApi.RECT ToRect(Rect r) => new()
     {
-        var tl = ToStage(Home.Left, Home.Top);
-        _funnel.Apply(t, new Rect(tl.X, tl.Y, W, H), ToStage(_mouth.X, _mouth.Y), MouthWidth);
-    }
+        Left = (int)r.Left - 200, Top = (int)r.Top, Right = (int)r.Right + 200, Bottom = (int)r.Bottom + 60,
+    };
+
+    protected override void Apply(double t) => DrawMorph(Morph.Settle(t));
 }
 
 /// <summary>
-/// The island lets a window back out: it pours down out of the notch through the same funnel and
-/// opens up onto its spot. Or, when the user dragged it out, the card they're holding grows into
-/// the window. The overlay then holds over the real window (so there's never a blank frame while
-/// the app repaints) and fades away.
+/// The island lets a window back out: the black pill grows out of the island on a spring, its
+/// colour coming back, and lands on the window's spot with a little overshoot. Or, when the user
+/// dragged it out, the card they're holding grows into the window. The overlay then holds over
+/// the real window (so there's never a blank frame while the app repaints) and fades away.
 /// </summary>
 internal sealed class EmergeAnimation : FlightOverlay
 {
     private readonly WindowApi.RECT _from;
     private readonly bool _fromNotch;
-    private readonly Funnel? _funnel;
 
-    /// <param name="from">Where it starts: the island's mouth (a point-sized rect) or the dragged card, physical pixels.</param>
+    /// <param name="from">The dragged card (physical pixels); ignored when it comes out of the island.</param>
     /// <param name="to">The window's final visible bounds, physical pixels.</param>
-    public EmergeAnimation(BitmapSource? snapshot, WindowApi.RECT from, WindowApi.RECT to, bool fromNotch, double dpiScale)
-        : base("Emerge", snapshot, to, from, dpiScale, TimeSpan.FromMilliseconds(fromNotch ? 620 : 380))
+    /// <param name="island">The island's live outline (physical pixels).</param>
+    public EmergeAnimation(BitmapSource? snapshot, WindowApi.RECT from, WindowApi.RECT to, bool fromNotch, Func<Rect> island, double dpiScale)
+        : base("Emerge", snapshot, to, fromNotch ? AbsorbAnimation.ToRect(island()) : from, dpiScale,
+            fromNotch ? Morph.Duration : TimeSpan.FromMilliseconds(380))
     {
         _from = from;
         _fromNotch = fromNotch;
-        if (fromNotch)
-        {
-            Visual.Visibility = Visibility.Hidden;
-            _funnel = new Funnel(Stage, snapshot == null ? null : Downscale(snapshot));
-        }
-    }
-
-    /// <summary>A lightly underdamped spring from 0 to 1: fast out, a whisper of overshoot, settled at t = 1.</summary>
-    private static double Spring(double t, double damping, double omega)
-    {
-        if (t >= 1) return 1;
-        double v = 1 - Math.Exp(-damping * t) * (Math.Cos(omega * t) + damping / omega * Math.Sin(omega * t));
-        return Lerp(v, 1, Smoothstep(0.85, 1, t));
+        IslandRect = island;
+        VeilBrush.Color = Colors.Black;
     }
 
     protected override void Apply(double t)
     {
-        if (_funnel != null)
+        if (_fromNotch)
         {
-            // The suction played backwards: the neck forms at the mouth and the window pours out
-            // and opens up, the bottom rows landing last, decelerating into place.
-            var tl = ToStage(Home.Left, Home.Top);
-            _funnel.Apply(1 - t, new Rect(tl.X, tl.Y, W, H), ToStage(_from.Left, _from.Top), AbsorbAnimation.MouthWidth);
+            DrawMorph(Math.Max(-0.2, 1 - Morph.Springy(t)));
             return;
         }
 
         // From the dragged card: it expands from the card into the full window.
-        double w = W, h = H, s = Scale;
-        var start = Local(_from.Left + _from.Width / 2.0, _from.Top + _from.Height / 2.0);
-        double fromW = _from.Width / s, fromH = _from.Height / s;
-        double k = Spring(t, 9, 14);
-        Place(Lerp(start.X, w / 2, k), Lerp(start.Y, h / 2, k), Lerp(fromW / Math.Max(1, w), 1, k), Lerp(fromH / Math.Max(1, h), 1, k), 0);
+        double k = Morph.Springy(t);
+        var card = new Rect(_from.Left, _from.Top, _from.Width, _from.Height);
+        var home = new Rect(Home.Left, Home.Top, Home.Width, Home.Height);
+        var r = new Rect(
+            card.X + (home.X - card.X) * k, card.Y + (home.Y - card.Y) * k,
+            Math.Max(1, card.Width + (home.Width - card.Width) * k), Math.Max(1, card.Height + (home.Height - card.Height) * k));
+        PlaceRect(r, 9);
         Veil.Opacity = 0;
-        Visual.Opacity = Lerp(0.92, 1, t);
+        SetShadow(0);
     }
 
     protected override void OnLanded()
     {
         // The real window has just been shown underneath; give it a beat to paint, then fade away.
-        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(170))
+        var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(150))
         {
-            BeginTime = TimeSpan.FromMilliseconds(90),
+            BeginTime = TimeSpan.FromMilliseconds(80),
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
         };
         fade.Completed += (_, _) => Close();

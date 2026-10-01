@@ -66,15 +66,13 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   only to ignore the pointer passing through; Settings waits 450 ms since it leaves the island).
   The owner wants it instant; don't add a visible countdown. A click right after a hover-open
   doesn't toggle the view shut. Switching views slides the new one in.
-- **The island eats windows like a vacuum** (owner's request, after rejecting an orbiting
-  "accretion disk" version): `AbsorbAnimation` uses `Funnel`, a genie effect into the notch (the
-  snapshot is one GPU mesh with rounded corners, never flat slices: those looked stepped and
-  "Android" to the owner; rows nearest the island go first and narrow as they near the mouth, so
-  the neck always reaches into the island and the window pours up into the black), while the island holds its mouth open
-  (`EatingShape`) and gulps at the end. `EmergeAnimation` runs the funnel backwards (pours out of
-  the notch onto its spot), or grows the dragged card into the window. The real
-  window is only shown when the snapshot lands (`WindowVault.BeginRestore`/`FinishRestore`; in-flight
-  windows are still saved, so a crash mid-animation can't lose them).
+- **Black hole motion = "Morph", approved by the owner in the Black Hole Lab preview**
+  (https://claude.ai/artifact/8qDiTu3jGKZ7iD1XnMgm26, style A, speed 1.05, bounce 0.60). The window
+  slides and shrinks into the island's own pill shape, draining to black, and merges; the island
+  opens 1.45×/1.55× while it works and gulps after. Coming out is the same path on an underdamped
+  spring. The curves live in `Morph` (`AbsorbAnimation.cs`) and must stay identical to the
+  preview. Owner rejected: orbit/accretion disk, sliced genie, mesh genie. For any change to this
+  motion, update the preview first and get approval, then port.
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
 - **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the

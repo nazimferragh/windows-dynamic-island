@@ -46,8 +46,6 @@ public partial class IslandWindow : Window
     private static readonly Silhouette OpenShape = new(640, 206, 12, 32);
     private static readonly Silhouette OpenShelfShape = new(640, 336, 14, 32);
     private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
-    /// <summary>The open mouth while a window is sucked in or let out (a little wider than the funnel's neck).</summary>
-    private static readonly Silhouette EatingShape = new(AbsorbAnimation.MouthWidth + 110, 50, 9, 22);
     private static readonly Silhouette DropPanelShape = new(720, 154, 12, 30);
     private static readonly Silhouette DropPanelArmedShape = new(736, 160, 12, 32);
 
@@ -393,14 +391,29 @@ public partial class IslandWindow : Window
             case State.DownloadStart:
                 return DownloadStartShape;
         }
-        // Eating (or letting out) a window: the island opens its mouth wide around it.
-        if (_eating > 0) return EatingShape;
+        var closed = ClosedSilhouette(hasMedia, hasVault, dlActive);
+        // Eating (or letting out) a window: the island opens up around it (as in the Black Hole Lab
+        // preview: 1.45× wider, 1.55× taller).
+        if (_eating > 0) return new Silhouette(closed.Width * 1.45, closed.Height * 1.55, closed.Flare + 2, closed.Radius * 1.5);
+        return closed;
+    }
+
+    private Silhouette ClosedSilhouette(bool hasMedia, bool hasVault, bool dlActive)
+    {
         // Closed priority: call/recording > download > media > black hole > idle.
         if (LiveShown) return _hovered ? ClosedLiveHoverShape : ClosedLiveShape;
         if (dlActive) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
         if (hasMedia && ClosedMediaShown) return _hovered ? ClosedMediaHoverShape : ClosedMediaShape;
         if (hasVault) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
         return _hovered ? ClosedIdleHoverShape : ClosedIdleShape;
+    }
+
+    /// <summary>The island's outline right now, physical pixels (the target windows morph into).</summary>
+    private Rect IslandScreenRect()
+    {
+        double s = DpiScale;
+        double w = Math.Max(_width.Value, 40) * s, h = Math.Max(_height.Value, 16) * s;
+        return new Rect(_monitor.X + _monitor.Width / 2.0 - w / 2, _strip.ReservedTop, w, h);
     }
 
     private void ApplyState(bool animate)
@@ -1166,8 +1179,10 @@ public partial class IslandWindow : Window
     private void Swallow(AbsorbedWindow item, WindowApi.RECT rect)
     {
         double s = DpiScale;
-        var target = new Point(_monitor.X + _monitor.Width / 2.0, _strip.ReservedTop + 18 * s);
-        var animation = new AbsorbAnimation(item.Snapshot, rect, target, s);
+        // Opens the mouth first, so the window morphs towards the opened island.
+        _eating++;
+        ApplyState(animate: true);
+        var animation = new AbsorbAnimation(item.Snapshot, rect, IslandScreenRect, s);
         animation.ContentRendered += (_, _) => animation.Play();
         animation.Finished += () =>
         {
@@ -1184,20 +1199,18 @@ public partial class IslandWindow : Window
         if (!_vault.Commit(item))
         {
             animation.Close();
+            _eating = Math.Max(0, _eating - 1);
+            ApplyState(animate: true);
             Wobble();
-            return;
         }
-        // The island opens its mouth wide and sucks it in.
-        _eating++;
-        ApplyState(animate: true);
     }
 
     /// <summary>The notch bounces a little when something falls in.</summary>
     private void Gulp()
     {
-        _height.Kick(260);
-        _width.Kick(380);
-        _glowPulse = 0.6; // a flash of the event horizon
+        // As in the preview: a quick wide gulp, no glow (it's all black).
+        _height.Kick(180);
+        _width.Kick(600);
         StartShapeAnimation();
     }
 
@@ -1719,6 +1732,8 @@ public partial class IslandWindow : Window
             if (!mouthOpen) return;
             _eating = Math.Max(0, _eating - 1);
             ApplyState(animate: true);
+            _width.Kick(-270); // it settles back with a small squeeze, as in the preview
+            StartShapeAnimation();
         }
 
         // Safety net: whatever happens to the animation, the window comes back.
@@ -1735,19 +1750,19 @@ public partial class IslandWindow : Window
             double s = DpiScale;
             bool fromNotch = fromCard == null;
             var from = fromCard ?? NotchMouth(s);
-            var animation = new EmergeAnimation(item.Snapshot, from, dest.Value, fromNotch, s);
-            animation.ContentRendered += (_, _) => animation.Play();
-            animation.Finished += Show;
-            animation.Closed += (_, _) => Show();
-            animation.Show();
             if (fromNotch)
             {
-                // The island opens its mouth and pours it out from under itself.
-                WindowApi.RaiseTopmost(_hwnd);
                 mouthOpen = true;
                 _eating++;
                 ApplyState(animate: true);
             }
+            var animation = new EmergeAnimation(item.Snapshot, from, dest.Value, fromNotch, IslandScreenRect, s);
+            animation.ContentRendered += (_, _) => animation.Play();
+            animation.Finished += Show;
+            animation.Closed += (_, _) => Show();
+            animation.Show();
+            // It comes out of the island, which stays in front.
+            if (fromNotch) WindowApi.RaiseTopmost(_hwnd);
         }
         catch (Exception ex)
         {
