@@ -747,7 +747,9 @@ public partial class IslandWindow : Window
             _height.Kick(120); // a little "got it" bump
             // Snapshot it now, while it still looks the way the user is holding it: on release
             // Windows may snap/maximize it (drag-to-top) before we get to hide it.
-            var item = _vault.Prepare(drag.Hwnd, drag.StartPlacement);
+            // Its picture is taken on a worker thread, so the drag never hitches.
+            var item = _vault.Prepare(drag.Hwnd, drag.StartPlacement, captureNow: false);
+            _armedSnapshot = item == null ? null : WindowVault.CaptureSnapshotAsync(drag.Hwnd);
             _armed = item == null ? null : (item, WindowApi.GetVisibleBounds(drag.Hwnd), drag.CursorX, drag.CursorY);
         }
 
@@ -783,6 +785,12 @@ public partial class IslandWindow : Window
         rect.Right += dx;
         rect.Top += dy;
         rect.Bottom += dy;
+        // The picture was started when it entered the zone; it's almost always ready by now.
+        if (_armedSnapshot is { } shot && item.Snapshot == null)
+        {
+            try { if (shot.Wait(250)) item.Snapshot = shot.Result; }
+            catch (Exception ex) { Log.Error("Window snapshot failed", ex); }
+        }
         Swallow(item, rect);
     }
 
@@ -1225,6 +1233,8 @@ public partial class IslandWindow : Window
     }
 
     private bool _dropHintShown;
+    /// <summary>The armed window's picture, being taken in the background.</summary>
+    private System.Threading.Tasks.Task<System.Windows.Media.Imaging.BitmapSource?>? _armedSnapshot;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
 
@@ -1729,7 +1739,10 @@ public partial class IslandWindow : Window
     /// </summary>
     private void EmergeWindow(AbsorbedWindow item, (int X, int Y)? at, WindowApi.RECT? fromCard)
     {
-        var dest = _vault.BeginRestore(item, at);
+        // A click brings it back on this island's screen (the one the user is looking at), wherever
+        // it was eaten; dragged out, it lands under the cursor.
+        var myWork = WindowSnapper.WorkAreaAt(_monitor.X + _monitor.Width / 2, _monitor.Y + _monitor.Height / 2);
+        var dest = _vault.BeginRestore(item, at, at == null ? myWork : null);
         if (dest == null) return;
 
         bool shown = false, mouthOpen = false;

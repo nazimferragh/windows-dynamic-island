@@ -56,6 +56,10 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   Opening the app again while it runs opens Settings. A Run entry (`--startup-entry`) lists the
   island in Settings › Apps › Startup / Task Manager; it only hands off to the task, and every
   automatic start honors that switch (`AutoStartTask.DisabledInWindowsStartup`).
+- **A window comes back out on the screen whose island was clicked** (`WindowVault.BeginRestore`
+  with `onWork`, `WindowApi.MovePlacementTo`), same relative spot and size; dragged out, it lands
+  under the cursor. Keep the black hole smooth: no per-frame effects (shadow/blur) on the flying
+  snapshot, and the snapshot of a dragged window is taken on a worker thread.
 - **Eating is drag-and-drop, no hold** (owner's request, as in the preview): dragging a window
   near the island grows it; in the zone under it a "Let go to tuck it away" pill shows; releasing
   eats it at once. Nothing else may pop up over the island during that drag.
@@ -99,7 +103,8 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 
 - `DynamicIsland.exe --panel wifi|bluetooth|apps|player|close|restore` asks the running island to open a
   panel, or (`restore`) to bring the newest black-hole window back out, or (`absorb:<hwnd>`) to
-  swallow a given window (use your own test window, never the owner's). Works even when the island
+  swallow a given window (use your own test window, never the owner's). Append `@N` to send it to the
+  island on the Nth screen (e.g. `restore@1`). Works even when the island
   runs elevated and test clicks can't reach it.
 - `DynamicIsland.exe --diag` logs what the Wi‑Fi and Bluetooth panels would list, then exits.
 - Opening the app again while it runs opens Settings.

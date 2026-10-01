@@ -230,6 +230,25 @@ public static class WindowApi
         SetWindowPlacement(hwnd, ref placement);
     }
 
+    /// <summary>
+    /// The same placement moved to another screen's work area: same relative spot, same size if it
+    /// fits (shrunk to fit otherwise). Maximized windows then maximize on that screen. Unchanged if
+    /// it's already on that screen.
+    /// </summary>
+    public static WINDOWPLACEMENT MovePlacementTo(WINDOWPLACEMENT placement, RECT work)
+    {
+        var r = placement.rcNormalPosition;
+        var from = GetWorkArea(r.Left + r.Width / 2, r.Top + r.Height / 2);
+        if (from.Left == work.Left && from.Top == work.Top && from.Right == work.Right && from.Bottom == work.Bottom) return placement;
+        int w = Math.Min(Math.Max(r.Width, 200), work.Width), h = Math.Min(Math.Max(r.Height, 150), work.Height);
+        double fx = from.Width > r.Width ? (double)(r.Left - from.Left) / (from.Width - r.Width) : 0.5;
+        double fy = from.Height > r.Height ? (double)(r.Top - from.Top) / (from.Height - r.Height) : 0.5;
+        int left = work.Left + (int)Math.Round(Math.Clamp(fx, 0, 1) * (work.Width - w));
+        int top = work.Top + (int)Math.Round(Math.Clamp(fy, 0, 1) * (work.Height - h));
+        placement.rcNormalPosition = new RECT { Left = left, Top = top, Right = left + w, Bottom = top + h };
+        return placement;
+    }
+
     /// <summary>Moves a (hidden) window so its title bar sits under the given point, kept inside the work area.</summary>
     public static void MoveTitleBarTo(IntPtr hwnd, int x, int y)
     {

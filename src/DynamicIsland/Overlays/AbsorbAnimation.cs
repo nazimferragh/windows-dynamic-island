@@ -40,11 +40,6 @@ internal abstract class FlightOverlay : Window
     protected readonly SolidColorBrush VeilBrush = new(Color.FromRgb(10, 6, 22));
     /// <summary>The overlay's canvas, for extra drawings (the accretion disk) under the snapshot.</summary>
     protected readonly Canvas Stage = new();
-    /// <summary>The window's soft shadow, which tightens as it shrinks into the island.</summary>
-    protected readonly System.Windows.Media.Effects.DropShadowEffect Shadow = new()
-    {
-        Color = Colors.Black, Direction = 270, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance,
-    };
     private readonly RectangleGeometry _clip = new();
 
     protected FlightOverlay(string name, BitmapSource? snapshot, WindowApi.RECT home, WindowApi.RECT extent, double dpiScale, TimeSpan duration)
@@ -95,8 +90,9 @@ internal abstract class FlightOverlay : Window
         {
             Children = { face, Veil },
             RenderTransform = Transform,
+            // No shadow effect: a blur over a window-sized surface every frame was what made big
+            // windows stutter. Windows' own shadow is back the moment the real window shows.
             Clip = _clip,
-            Effect = Shadow,
         };
         Stage.Children.Add(Visual);
         Content = Stage;
@@ -199,19 +195,9 @@ internal abstract class FlightOverlay : Window
         var island = IslandRect?.Invoke() ?? Rect.Empty;
         if (island.IsEmpty) return;
         var home = new Rect(Home.Left, Home.Top, Home.Width, Home.Height);
-        var (rect, radius, black, shadowK) = Morph.At(k, home, island, Scale);
+        var (rect, radius, black) = Morph.At(k, home, island, Scale);
         PlaceRect(rect, radius);
         Veil.Opacity = black;
-        SetShadow(shadowK);
-    }
-
-    /// <summary>The shadow tightens and lightens as the window shrinks into the island (0 = full, 1 = none).</summary>
-    protected void SetShadow(double k)
-    {
-        k = Math.Clamp(k, 0, 1);
-        Shadow.ShadowDepth = 18 - 16 * k;
-        Shadow.BlurRadius = 50 - 44 * k;
-        Shadow.Opacity = 0.45 - 0.25 * k;
     }
 
     /// <summary>
@@ -304,7 +290,7 @@ internal static class Morph
     /// Where the window is at morph progress k (0 = its own spot, 1 = the island's pill; slightly
     /// below 0 while it overshoots on the way out). Rects in physical pixels; radius in DIPs.
     /// </summary>
-    public static (Rect Rect, double Radius, double Black, double ShadowK) At(double k, Rect window, Rect island, double scale)
+    public static (Rect Rect, double Radius, double Black) At(double k, Rect window, Rect island, double scale)
     {
         // Position travels a touch ahead of size, so it reads as being drawn in, not just shrinking.
         double kp = Math.Min(1, k * 1.08), ks = k;
@@ -315,7 +301,7 @@ internal static class Morph
             Math.Max(1, window.Height + (island.Height - window.Height) * ks));
         double islandH = island.Height / scale;
         double radius = 9 + (islandH * 0.45 - 9) * Smooth(0, 0.8, k);
-        return (r, radius, Smooth(0.12, 0.62, k), Clamp01(k));
+        return (r, radius, Smooth(0.12, 0.62, k));
     }
 }
 
@@ -380,7 +366,6 @@ internal sealed class EmergeAnimation : FlightOverlay
             Math.Max(1, card.Width + (home.Width - card.Width) * k), Math.Max(1, card.Height + (home.Height - card.Height) * k));
         PlaceRect(r, 9);
         Veil.Opacity = 0;
-        SetShadow(0);
     }
 
     protected override void OnLanded()

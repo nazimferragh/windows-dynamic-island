@@ -17,7 +17,8 @@ public sealed class AbsorbedWindow
     public required IntPtr Handle { get; init; }
     public required uint ProcessId { get; init; }
     public required string Title { get; init; }
-    public BitmapSource? Snapshot { get; init; }
+    /// <summary>Set once; for a dragged window it's captured in the background and filled in on drop.</summary>
+    public BitmapSource? Snapshot { get; set; }
     public ImageSource? Icon { get; init; }
     public WindowApi.WINDOWPLACEMENT Placement { get; init; }
 
@@ -85,7 +86,7 @@ public sealed class WindowVault
     }
 
     /// <summary>Captures what's needed to show the window in the island. Doesn't hide it yet.</summary>
-    public AbsorbedWindow? Prepare(IntPtr hwnd, WindowApi.WINDOWPLACEMENT? restorePlacement)
+    public AbsorbedWindow? Prepare(IntPtr hwnd, WindowApi.WINDOWPLACEMENT? restorePlacement, bool captureNow = true)
     {
         if (!CanAbsorb(hwnd) || _items.Any(i => i.Handle == hwnd)) return null;
         uint pid = WindowApi.GetProcessId(hwnd);
@@ -98,7 +99,7 @@ public sealed class WindowVault
             Handle = hwnd,
             ProcessId = pid,
             Title = title,
-            Snapshot = WindowApi.IsHung(hwnd) ? null : CaptureSnapshot(hwnd),
+            Snapshot = !captureNow || WindowApi.IsHung(hwnd) ? null : CaptureSnapshot(hwnd),
             Icon = LoadIcon(hwnd, exePath),
             Placement = restorePlacement ?? WindowApi.GetPlacement(hwnd),
             DesktopId = VirtualDesktops.GetWindowDesktop(hwnd),
@@ -126,7 +127,9 @@ public sealed class WindowVault
     /// a point. Returns where it will be on screen (physical pixels), or null if it's gone. Until
     /// <see cref="FinishRestore"/> it's still tracked, so a crash mid-animation can't lose it.
     /// </summary>
-    public WindowApi.RECT? BeginRestore(AbsorbedWindow item, (int X, int Y)? at)
+    /// <param name="onWork">The work area of the screen it should come back on (the island that
+    /// was clicked); null keeps its old screen.</param>
+    public WindowApi.RECT? BeginRestore(AbsorbedWindow item, (int X, int Y)? at, WindowApi.RECT? onWork = null)
     {
         if (!_items.Remove(item)) return null;
         bool alive = WindowApi.IsWindow(item.Handle);
@@ -136,7 +139,7 @@ public sealed class WindowVault
         if (!alive) return null;
 
         if (at is { } p) WindowApi.MoveTitleBarTo(item.Handle, p.X, p.Y);
-        else WindowApi.PlaceHidden(item.Handle, item.Placement);
+        else WindowApi.PlaceHidden(item.Handle, onWork is { } work ? WindowApi.MovePlacementTo(item.Placement, work) : item.Placement);
         var rect = WindowApi.GetVisibleBounds(item.Handle);
         if (item.Placement.showCmd == WindowApi.SW_SHOWMAXIMIZED)
             rect = WindowApi.GetWorkArea(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2);
@@ -232,6 +235,13 @@ public sealed class WindowVault
             Log.Error("Failed to save vault state", ex);
         }
     }
+
+    /// <summary>
+    /// Takes the window's picture on a worker thread (it can take a moment for big windows, which
+    /// made dragging hitch when done on the UI thread). The result is frozen, usable anywhere.
+    /// </summary>
+    public static System.Threading.Tasks.Task<BitmapSource?> CaptureSnapshotAsync(IntPtr hwnd) =>
+        System.Threading.Tasks.Task.Run(() => WindowApi.IsHung(hwnd) ? null : CaptureSnapshot(hwnd));
 
     private static BitmapSource? CaptureSnapshot(IntPtr hwnd)
     {

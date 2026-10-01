@@ -208,7 +208,15 @@ public partial class App : Application
             if (Guardian.TakePanelRequest() is { } panel)
             {
                 var primary = Forms.Screen.PrimaryScreen!.Bounds;
-                (_islands.FirstOrDefault(i => i.Monitor.X == primary.X && i.Monitor.Y == primary.Y) ?? _islands.FirstOrDefault())?.ShowPanel(panel);
+                var target = _islands.FirstOrDefault(i => i.Monitor.X == primary.X && i.Monitor.Y == primary.Y) ?? _islands.FirstOrDefault();
+                // "name@N": ask the island on the Nth screen instead (tests of multi-screen behavior).
+                int at = panel.LastIndexOf('@');
+                if (at > 0 && int.TryParse(panel.AsSpan(at + 1), out int screen) && screen >= 0 && screen < _islands.Count)
+                {
+                    target = _islands[screen];
+                    panel = panel[..at];
+                }
+                target?.ShowPanel(panel);
             }
             if (!Guardian.QuitRequested()) return;
             Log.Info("Quit requested by the installer");
