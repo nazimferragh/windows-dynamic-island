@@ -39,7 +39,8 @@ jobs:
           # Start-with-Windows: a Task Scheduler task, or the Run key when Task Scheduler isn't usable.
           schtasks /query /tn DynamicIsland | Out-Null
           $task = $LASTEXITCODE -eq 0
-          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').DynamicIsland
+          # (A fresh machine may not even have the Run key yet.)
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).DynamicIsland
           if (-not $task -and -not $run) { throw "Start-with-Windows not set up (no task, no Run entry)" }
           $global:LASTEXITCODE = 0
           Start-Process $exe
