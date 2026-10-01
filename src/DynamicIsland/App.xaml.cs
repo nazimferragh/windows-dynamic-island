@@ -64,7 +64,7 @@ public partial class App : Application
             return;
         }
 
-        // Opens a panel of the running island: DynamicIsland.exe --panel wifi|bluetooth|apps|player|close
+        // Opens a panel of the running island: DynamicIsland.exe --panel wifi|bluetooth|apps|player|close|restore
         int panelArg = Array.IndexOf(e.Args, "--panel");
         if (panelArg >= 0 && panelArg + 1 < e.Args.Length)
         {

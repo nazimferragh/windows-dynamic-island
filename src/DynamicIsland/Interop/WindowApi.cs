@@ -221,6 +221,15 @@ public static class WindowApi
         ShowWindow(hwnd, SW_SHOW);
     }
 
+    /// <summary>Gives a hidden window its saved position without showing it yet.</summary>
+    public static void PlaceHidden(IntPtr hwnd, WINDOWPLACEMENT placement)
+    {
+        placement.length = Marshal.SizeOf<WINDOWPLACEMENT>();
+        placement.showCmd = SW_HIDE;
+        placement.flags = 0;
+        SetWindowPlacement(hwnd, ref placement);
+    }
+
     /// <summary>Moves a (hidden) window so its title bar sits under the given point, kept inside the work area.</summary>
     public static void MoveTitleBarTo(IntPtr hwnd, int x, int y)
     {

@@ -13,11 +13,13 @@ namespace DynamicIsland.Overlays;
 internal sealed class DragGhost : Window
 {
     private const double CardWidth = 240;
+    private readonly double _cardHeight;
     private IntPtr _hwnd;
 
     public DragGhost(BitmapSource? snapshot, ImageSource? icon, string title)
     {
         double height = snapshot != null ? Math.Clamp(CardWidth * snapshot.PixelHeight / Math.Max(1, snapshot.PixelWidth), 60, 180) : 60;
+        _cardHeight = height;
 
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -71,5 +73,14 @@ internal sealed class DragGhost : Window
         var dpi = VisualTreeHelper.GetDpi(this);
         int w = (int)(Width * dpi.DpiScaleX);
         WindowApi.MoveTopmost(_hwnd, x - w / 2, y - (int)(12 * dpi.DpiScaleY));
+    }
+
+    /// <summary>Where the card is on screen when the cursor is at (x, y), physical pixels.</summary>
+    public WindowApi.RECT CardRect(int x, int y)
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        int w = (int)(CardWidth * dpi.DpiScaleX), h = (int)(_cardHeight * dpi.DpiScaleY);
+        int top = y + (int)(8 * dpi.DpiScaleY);
+        return new WindowApi.RECT { Left = x - w / 2, Top = top, Right = x - w / 2 + w, Bottom = top + h };
     }
 }

@@ -43,6 +43,8 @@ public sealed class WindowVault
     };
 
     private readonly List<AbsorbedWindow> _items = new();
+    /// <summary>Taken out of the black hole, still hidden while the island animates them back out.</summary>
+    private readonly List<AbsorbedWindow> _inFlight = new();
     private readonly DispatcherTimer _sweep = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _desktopPoll = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private Guid _currentDesktop = VirtualDesktops.GetCurrentDesktop();
@@ -118,34 +120,45 @@ public sealed class WindowVault
         return true;
     }
 
-    /// <summary>Puts the window back exactly where it was before it was absorbed.</summary>
-    public void Restore(AbsorbedWindow item)
+    /// <summary>
+    /// First half of an animated restore: takes the window out of the black hole and moves it
+    /// (still hidden) to where it will reappear, either its old place or with its title bar under
+    /// a point. Returns where it will be on screen (physical pixels), or null if it's gone. Until
+    /// <see cref="FinishRestore"/> it's still tracked, so a crash mid-animation can't lose it.
+    /// </summary>
+    public WindowApi.RECT? BeginRestore(AbsorbedWindow item, (int X, int Y)? at)
     {
-        if (!Remove(item) || !WindowApi.IsWindow(item.Handle)) return;
-        WindowApi.RestorePlacement(item.Handle, item.Placement);
-        WindowApi.Activate(item.Handle);
+        if (!_items.Remove(item)) return null;
+        bool alive = WindowApi.IsWindow(item.Handle);
+        if (alive) _inFlight.Add(item);
+        Save();
+        Changed?.Invoke();
+        if (!alive) return null;
+
+        if (at is { } p) WindowApi.MoveTitleBarTo(item.Handle, p.X, p.Y);
+        else WindowApi.PlaceHidden(item.Handle, item.Placement);
+        var rect = WindowApi.GetVisibleBounds(item.Handle);
+        if (item.Placement.showCmd == WindowApi.SW_SHOWMAXIMIZED)
+            rect = WindowApi.GetWorkArea(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2);
+        return rect;
     }
 
-    /// <summary>Brings the window back with its title bar under the given point (physical pixels).</summary>
-    public void RestoreAt(AbsorbedWindow item, int x, int y)
+    /// <summary>Second half: shows the window where <see cref="BeginRestore"/> put it and focuses it.</summary>
+    public void FinishRestore(AbsorbedWindow item, bool atPoint)
     {
-        if (!Remove(item) || !WindowApi.IsWindow(item.Handle)) return;
-        if (item.Placement.showCmd == WindowApi.SW_SHOWMAXIMIZED)
-        {
-            WindowApi.MoveTitleBarTo(item.Handle, x, y);
-            WindowApi.ShowWindow(item.Handle, WindowApi.SW_SHOWMAXIMIZED);
-        }
-        else
-        {
-            WindowApi.MoveTitleBarTo(item.Handle, x, y);
-            WindowApi.ShowWindow(item.Handle, WindowApi.SW_SHOW);
-        }
+        if (!_inFlight.Remove(item)) return;
+        Save();
+        if (!WindowApi.IsWindow(item.Handle)) return;
+        bool maximized = item.Placement.showCmd == WindowApi.SW_SHOWMAXIMIZED;
+        WindowApi.ShowWindow(item.Handle, maximized ? WindowApi.SW_SHOWMAXIMIZED : atPoint ? WindowApi.SW_SHOW : WindowApi.SW_SHOWNORMAL);
         WindowApi.Activate(item.Handle);
     }
 
     /// <summary>Shows every absorbed window again without stealing focus. Safe to call from a crash handler.</summary>
     public void RestoreAll()
     {
+        _items.AddRange(_inFlight);
+        _inFlight.Clear();
         foreach (var item in _items)
         {
             try
@@ -187,14 +200,6 @@ public sealed class WindowVault
         }
     }
 
-    private bool Remove(AbsorbedWindow item)
-    {
-        if (!_items.Remove(item)) return false;
-        Save();
-        Changed?.Invoke();
-        return true;
-    }
-
     /// <summary>Drops windows that were closed, or that their app showed again by itself.</summary>
     private void Sweep()
     {
@@ -212,12 +217,12 @@ public sealed class WindowVault
         try
         {
             Directory.CreateDirectory(Log.LogDirectory);
-            if (_items.Count == 0)
+            if (_items.Count == 0 && _inFlight.Count == 0)
             {
                 File.Delete(StatePath);
                 return;
             }
-            var saved = _items.Select(i => new SavedWindow(i.Handle.ToInt64(), i.ProcessId)).ToList();
+            var saved = _items.Concat(_inFlight).Select(i => new SavedWindow(i.Handle.ToInt64(), i.ProcessId)).ToList();
             var temp = StatePath + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(saved));
             File.Move(temp, StatePath, overwrite: true);

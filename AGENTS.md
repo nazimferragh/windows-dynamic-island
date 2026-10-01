@@ -59,6 +59,16 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 - **Snap layouts live in the island's drop panel** (`WindowSnapper`, `SnapPreview`): six layouts
   around the black hole, Windows' own snap bar/preview stay off. On portrait monitors every layout
   is transposed (halves → top/bottom). Works on Windows 10 too (which has no snap layouts).
+  Aiming is forgiving: the panel is split into one column per tile and the cursor's position inside
+  it picks the zone (`AimSnap`, with hysteresis); the aimed tile grows and shows which zones
+  auto-fill will use, and the dropped window glides into place (`WindowSnapper.Glide`).
+- **Hover to open**: resting on Wi‑Fi, Bluetooth, Settings or Apps in the open island for 1.9 s
+  opens it (a bar fills under the icon while waiting). Owner's request; keep the exact delay.
+- **Black hole motion**: `AbsorbAnimation` (caught → swirling fall → dark → dissolve) and
+  `EmergeAnimation` (out of the notch, or from the dragged card, onto the window's spot). The real
+  window is only shown when the snapshot lands (`WindowVault.BeginRestore`/`FinishRestore`; in-flight
+  windows are still saved, so a crash mid-animation can't lose them).
+- **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
 - **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the
   island's own Wi‑Fi view (`WifiService`, `WifiPasswordWindow`), not Windows' flyout. Icons are our own drawings in the
@@ -77,7 +87,8 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 
 ## Testing helpers
 
-- `DynamicIsland.exe --panel wifi|bluetooth|apps|player|close` asks the running island to open a
-  panel (works even when the island runs elevated and test clicks can't reach it).
+- `DynamicIsland.exe --panel wifi|bluetooth|apps|player|close|restore` asks the running island to open a
+  panel, or (`restore`) to bring the newest black-hole window back out. Works even when the island
+  runs elevated and test clicks can't reach it.
 - `DynamicIsland.exe --diag` logs what the Wi‑Fi and Bluetooth panels would list, then exits.
 - Opening the app again while it runs opens Settings.

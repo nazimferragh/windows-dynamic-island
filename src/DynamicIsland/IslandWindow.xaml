@@ -213,20 +213,34 @@
 
             <!-- A window is being dragged up to the island, with snap layouts on: the drop panel.
                  Layout tiles on both sides (built in code), the black hole in the middle. -->
-            <Grid x:Name="DropPanelContent" Width="660" Height="146" VerticalAlignment="Top" HorizontalAlignment="Center"
+            <Grid x:Name="DropPanelContent" Width="720" Height="154" VerticalAlignment="Top" HorizontalAlignment="Center"
                   Opacity="0" IsHitTestVisible="False">
-                <StackPanel x:Name="SnapLeft" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="24,58,0,0" />
-                <Grid x:Name="DropHole" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,46,0,0">
-                    <Ellipse Width="26" Height="26" Fill="Black" />
-                    <Ellipse StrokeThickness="3" Stroke="{StaticResource HoleRingBrush}" RenderTransformOrigin="0.5,0.5" Margin="8">
+                <StackPanel x:Name="SnapLeft" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,48,0,0" />
+                <Grid x:Name="DropHole" Width="80" Height="80" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,35,0,0"
+                      RenderTransformOrigin="0.5,0.5">
+                    <Grid.RenderTransform>
+                        <ScaleTransform x:Name="DropHoleScale" />
+                    </Grid.RenderTransform>
+                    <!-- Soft halo that brightens while the window is held over the hole. -->
+                    <Ellipse x:Name="DropHoleHalo" Margin="2" Opacity="0">
+                        <Ellipse.Fill>
+                            <RadialGradientBrush>
+                                <GradientStop Color="#00000000" Offset="0.45" />
+                                <GradientStop Color="#665E5CE6" Offset="0.7" />
+                                <GradientStop Color="#00BF5AF2" Offset="1" />
+                            </RadialGradientBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <Ellipse Width="28" Height="28" Fill="Black" />
+                    <Ellipse StrokeThickness="3" Stroke="{StaticResource HoleRingBrush}" RenderTransformOrigin="0.5,0.5" Margin="11">
                         <Ellipse.RenderTransform>
                             <RotateTransform x:Name="DropHoleSpin" />
                         </Ellipse.RenderTransform>
                     </Ellipse>
                 </Grid>
-                <StackPanel x:Name="SnapRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,58,24,0" />
-                <TextBlock x:Name="DropLabel" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,121,0,0"
-                           FontSize="11.5" FontWeight="SemiBold" Foreground="White" />
+                <StackPanel x:Name="SnapRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,26,0" />
+                <TextBlock x:Name="DropLabel" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,122,0,0"
+                           FontSize="12" FontWeight="SemiBold" Foreground="White" />
             </Grid>
 
             <!-- Open. -->

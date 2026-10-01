@@ -101,6 +101,18 @@ public sealed class PinnedApps
         Save();
     }
 
+    /// <summary>Moves an app to a position in the row (drag to reorder).</summary>
+    public void MoveTo(PinnedApp app, int index)
+    {
+        int i = _apps.IndexOf(app);
+        if (i < 0) return;
+        index = Math.Clamp(index, 0, _apps.Count - 1);
+        if (i == index) return;
+        _apps.RemoveAt(i);
+        _apps.Insert(index, app);
+        Save();
+    }
+
     private void Save()
     {
         try

@@ -46,8 +46,8 @@ public partial class IslandWindow : Window
     private static readonly Silhouette OpenShape = new(640, 206, 12, 32);
     private static readonly Silhouette OpenShelfShape = new(640, 336, 14, 32);
     private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
-    private static readonly Silhouette DropPanelShape = new(660, 146, 12, 30);
-    private static readonly Silhouette DropPanelArmedShape = new(676, 152, 12, 32);
+    private static readonly Silhouette DropPanelShape = new(720, 154, 12, 30);
+    private static readonly Silhouette DropPanelArmedShape = new(736, 160, 12, 32);
 
     // Where a dragged window is pulled in / captured, in DIPs relative to the notch's top-center.
     // The capture zone is deliberately small and needs a short hold: the top of the screen is
@@ -79,6 +79,8 @@ public partial class IslandWindow : Window
     private readonly Stopwatch _frameClock = new();
     private TimeSpan _lastFrame;
     private bool _animating;
+    /// <summary>A purple glow that flashes when a window falls in or comes out, then fades (1..0).</summary>
+    private double _glowPulse;
 
     private readonly DispatcherTimer _openTimer = new() { Interval = TimeSpan.FromMilliseconds(220) };
     private readonly DispatcherTimer _closeTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
@@ -152,7 +154,7 @@ public partial class IslandWindow : Window
         _closeTimer.Tick += (_, _) =>
         {
             _closeTimer.Stop();
-            if (_appMenuOpen) return; // a pinned app's menu is up; stay open under it
+            if (_appMenuOpen || _appDrag != null) return; // a pinned app's menu is up, or apps are being rearranged
             SetState(State.Closed);
         };
         _peekTimer.Tick += (_, _) =>
@@ -225,6 +227,9 @@ public partial class IslandWindow : Window
         };
         _liveTimer.Tick += (_, _) => UpdateLive();
         OnMicActivityChanged();
+        _dwellTimer.Tick += (_, _) => FinishDwell();
+        AddDwell(GearButton, OpenSettingsFromIsland, () => false);
+        AddDwell(AppsButton, ShowAppsView, () => _appsView);
         ApplyAppearance();
         ApplyState(animate: false);
     }
@@ -262,7 +267,9 @@ public partial class IslandWindow : Window
     private bool DownloadActive => DownloadsShown && _downloads.HasActive;
     private bool ClosedMediaShown => AppSettings.Current.ShowClosedMedia;
 
-    private void GearButton_Click(object sender, RoutedEventArgs e)
+    private void GearButton_Click(object sender, RoutedEventArgs e) => OpenSettingsFromIsland();
+
+    private void OpenSettingsFromIsland()
     {
         _openTimer.Stop();
         _closeTimer.Stop();
@@ -427,8 +434,25 @@ public partial class IslandWindow : Window
         LiveSection.Visibility = _state == State.Open && live && !ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
         SetLiveAnimating(live && (closed || _state == State.Open));
         Reveal(BlackHoleContent, _state == State.Attract && !_snapPanel, animate);
-        Reveal(DropPanelContent, _state == State.Attract && _snapPanel, animate);
-        if (_snapPanel) DropLabel.Text = DropLabelText();
+        bool dropShown = _state == State.Attract && _snapPanel;
+        Reveal(DropPanelContent, dropShown, animate);
+        if (dropShown && !_dropPanelShown && animate) AnimateDropPanelIn();
+        _dropPanelShown = dropShown;
+        if (_snapPanel)
+        {
+            string label = DropLabelText();
+            if (DropLabel.Text != label)
+            {
+                DropLabel.Text = label;
+                DropLabel.BeginAnimation(OpacityProperty, new DoubleAnimation(0.3, 1, TimeSpan.FromMilliseconds(160)));
+            }
+        }
+        double halo = dropShown && _inZone ? (_capture ? 1 : 0.55) : 0;
+        if (halo != _haloShown)
+        {
+            _haloShown = halo;
+            DropHoleHalo.BeginAnimation(OpacityProperty, new DoubleAnimation(halo, TimeSpan.FromMilliseconds(_capture ? 120 : 220)));
+        }
         Reveal(OpenContent, _state == State.Open, animate);
         PlayerGrid.Visibility = _appsView || ListPanelShown ? Visibility.Collapsed : Visibility.Visible;
         AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
@@ -518,6 +542,7 @@ public partial class IslandWindow : Window
         double dt = Math.Min((now - _lastFrame).TotalSeconds, 1 / 30.0);
         _lastFrame = now;
 
+        _glowPulse = _glowPulse < 0.01 ? 0 : _glowPulse * Math.Exp(-4.5 * dt);
         const double step = 1 / 240.0;
         while (dt > 0)
         {
@@ -529,7 +554,7 @@ public partial class IslandWindow : Window
             dt -= h;
         }
 
-        bool settled = _width.TrySettle() & _height.TrySettle() & _flare.TrySettle() & _radius.TrySettle();
+        bool settled = _width.TrySettle() & _height.TrySettle() & _flare.TrySettle() & _radius.TrySettle() & _glowPulse == 0;
         RenderShape();
 
         if (settled)
@@ -558,6 +583,16 @@ public partial class IslandWindow : Window
             _shadow.ShadowDepth = 0;
             _shadow.BlurRadius = 40;
             _shadow.Opacity = _capture ? 0.95 : 0.35 + 0.5 * _attraction;
+            NotchShape.Effect ??= _shadow;
+            return;
+        }
+
+        if (_glowPulse > 0)
+        {
+            _shadow.Color = HoleGlow;
+            _shadow.ShadowDepth = 0;
+            _shadow.BlurRadius = 40;
+            _shadow.Opacity = 0.9 * _glowPulse;
             NotchShape.Effect ??= _shadow;
             return;
         }
@@ -630,7 +665,8 @@ public partial class IslandWindow : Window
             _snapPanel = true;
             inZone = holeOn && IsOverDropHole(drag.CursorX, drag.CursorY);
             attraction = 1;
-            SetSnapTarget(inZone ? null : SnapCellAt(drag.CursorX, drag.CursorY));
+            var aim = inZone ? null : AimSnap(drag.CursorX, drag.CursorY);
+            SetSnapTarget(aim?.Tile, aim?.Cell);
         }
         else
         {
@@ -679,11 +715,12 @@ public partial class IslandWindow : Window
     {
         var armed = _state == State.Attract && _capture ? _armed : null;
         var snap = _state == State.Attract && _snapPanel ? _snapCell : null;
+        var snapTile = _snapTile;
         bool panel = _snapPanel, overHole = _inZone;
         ExitAttract();
-        if (snap != null && drag.IsMove)
+        if (snap != null && snapTile != null && drag.IsMove)
         {
-            SnapWindow(drag.Hwnd, snap);
+            SnapWindow(drag.Hwnd, snap, snapTile);
             return;
         }
         if (armed == null || !drag.IsMove || !(panel ? overHole : IsInCaptureZone(drag.CursorX, drag.CursorY))) return;
@@ -725,11 +762,18 @@ public partial class IslandWindow : Window
 
     private bool _snapPanel;
     private SnapCell? _snapCell;
-    private Border? _snapCellElement;
     private SnapPreview? _preview;
-    private readonly List<Border> _snapCells = new();
-    /// <summary>For each zone, all the zones of its layout (to fill the rest after a drop).</summary>
-    private readonly Dictionary<SnapCell, SnapCell[]> _snapLayouts = new();
+    private bool _dropPanelShown;
+    private double _haloShown = -1;
+
+    /// <summary>
+    /// One layout tile in the drop panel: its slot (where it sits, used for aiming; animates in),
+    /// the drawn tile (grows when aimed at), and its zones with their brushes.
+    /// </summary>
+    private sealed record SnapTileView(Border Slot, Border Tile, ScaleTransform Zoom, (SnapCell Cell, SolidColorBrush Fill)[] Zones);
+    private readonly List<SnapTileView> _snapTiles = new();
+    /// <summary>The tile being aimed at (its layout is what gets filled after a drop).</summary>
+    private SnapTileView? _snapTile;
 
     /// <summary>Layout tiles: column widths, row heights, and each zone's (column, row, column span, row span).</summary>
     private sealed record SnapTile(string Name, double[] Cols, double[] Rows, (int C, int R, int CS, int RS, SnapCell Cell)[] Zones);
@@ -772,7 +816,9 @@ public partial class IslandWindow : Window
         }),
     };
 
-    private static readonly Brush SnapCellBrush = Frozen(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+    private static readonly Color ZoneIdle = Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF);
+    /// <summary>The other zones of the aimed layout: where recent windows will be placed.</summary>
+    private static readonly Color ZoneSibling = Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF);
 
     private static Brush Frozen(Color c)
     {
@@ -820,33 +866,74 @@ public partial class IslandWindow : Window
                 // Portrait: columns become rows.
                 foreach (var c in portrait ? tile.Rows : tile.Cols) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(c, GridUnitType.Star) });
                 foreach (var r in portrait ? tile.Cols : tile.Rows) grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(r, GridUnitType.Star) });
+                var zones = new List<(SnapCell, SolidColorBrush)>();
                 foreach (var (col, row, cs, rs, landscapeCell) in tile.Zones)
                 {
                     var cell = portrait ? Transpose(landscapeCell) : landscapeCell;
-                    var layout = tile.Zones.Select(z => portrait ? Transpose(z.Cell) : z.Cell).ToArray();
-                    var zone = new Border { CornerRadius = new CornerRadius(3), Background = SnapCellBrush, Margin = new Thickness(1.5), Tag = cell };
-                    _snapLayouts[cell] = layout;
+                    var fill = new SolidColorBrush(ZoneIdle);
+                    var zone = new Border { CornerRadius = new CornerRadius(3.5), Background = fill, Margin = new Thickness(1.5) };
                     Grid.SetColumn(zone, portrait ? row : col);
                     Grid.SetRow(zone, portrait ? col : row);
                     Grid.SetColumnSpan(zone, portrait ? rs : cs);
                     Grid.SetRowSpan(zone, portrait ? cs : rs);
                     grid.Children.Add(zone);
-                    _snapCells.Add(zone);
+                    zones.Add((cell, fill));
                 }
-                host.Children.Add(new Border
+                var zoom = new ScaleTransform(1, 1);
+                var drawn = new Border
                 {
-                    Width = portrait ? 32 : 76,
-                    Height = 48,
-                    Margin = new Thickness(t == 0 ? 0 : portrait ? 14 : 10, 0, 0, 0),
-                    CornerRadius = new CornerRadius(6),
-                    Padding = new Thickness(2),
-                    Background = Frozen(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF)),
-                    BorderBrush = Frozen(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)),
+                    Width = portrait ? 36 : 84,
+                    Height = 54,
+                    CornerRadius = new CornerRadius(7),
+                    Padding = new Thickness(2.5),
+                    Background = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+                    BorderBrush = Frozen(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)),
                     BorderThickness = new Thickness(1),
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    RenderTransform = zoom,
                     Child = grid,
-                });
+                };
+                var slot = new Border
+                {
+                    Margin = new Thickness(t == 0 ? 0 : portrait ? 16 : 12, 0, 0, 0),
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    RenderTransform = new TransformGroup { Children = { new ScaleTransform(1, 1), new TranslateTransform() } },
+                    Child = drawn,
+                };
+                host.Children.Add(slot);
+                _snapTiles.Add(new SnapTileView(slot, drawn, zoom, zones.ToArray()));
             }
         }
+    }
+
+    /// <summary>The tiles spread out from the black hole, nearest first, with a soft overshoot; the hole pops open.</summary>
+    private void AnimateDropPanelIn()
+    {
+        var ease = new BackEase { Amplitude = 0.35, EasingMode = EasingMode.EaseOut };
+        var duration = TimeSpan.FromMilliseconds(340);
+        int perSide = LeftTiles.Length;
+        for (int i = 0; i < _snapTiles.Count; i++)
+        {
+            var slot = _snapTiles[i].Slot;
+            bool left = i < perSide;
+            int order = left ? perSide - 1 - i : i - perSide; // 0 = next to the hole
+            var begin = TimeSpan.FromMilliseconds(30 + order * 40);
+            var group = (TransformGroup)slot.RenderTransform;
+            var scale = (ScaleTransform)group.Children[0];
+            var move = (TranslateTransform)group.Children[1];
+            // Start values first: during the stagger delay the animations aren't running yet.
+            slot.Opacity = 0;
+            move.X = left ? 28 : -28;
+            scale.ScaleX = scale.ScaleY = 0.7;
+            move.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(left ? 28 : -28, 0, duration) { BeginTime = begin, EasingFunction = ease });
+            var grow = new DoubleAnimation(0.7, 1, duration) { BeginTime = begin, EasingFunction = ease };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+            slot.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { BeginTime = begin });
+        }
+        var pop = new DoubleAnimation(0.35, 1, TimeSpan.FromMilliseconds(420)) { EasingFunction = new BackEase { Amplitude = 0.5, EasingMode = EasingMode.EaseOut } };
+        DropHoleScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+        DropHoleScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
     }
 
     /// <summary>Where the cursor is, in the drop panel's own coordinates.</summary>
@@ -860,34 +947,77 @@ public partial class IslandWindow : Window
         return bounds.Contains(p);
     }
 
-    private bool IsOverDropHole(int x, int y) => Contains(DropHole, DropPanelContent, DropPanelPoint(x, y), 12);
+    private bool IsOverDropHole(int x, int y) => Contains(DropHole, DropPanelContent, DropPanelPoint(x, y), 16);
 
-    private Border? SnapCellElementAt(int x, int y)
+    /// <summary>
+    /// The zone the cursor aims at. The panel is split into one column per tile (the nearest tile
+    /// wins, at any height), and inside it the cursor's position, clamped to the tile, picks the
+    /// zone. So the small zones are easy to hit, there are no dead gaps, and a zone stays chosen
+    /// until the cursor is clearly in the next one.
+    /// </summary>
+    private (SnapTileView Tile, SnapCell Cell)? AimSnap(int x, int y)
     {
         var p = DropPanelPoint(x, y);
-        foreach (var zone in _snapCells)
-            if (Contains(zone, DropPanelContent, p, 1.5)) return zone;
-        return null;
+        SnapTileView? best = null;
+        Rect bestBounds = default;
+        double bestDistance = double.MaxValue;
+        foreach (var t in _snapTiles)
+        {
+            if (t.Slot.ActualWidth <= 0) continue;
+            var b = t.Slot.TransformToAncestor(DropPanelContent).TransformBounds(new Rect(t.Slot.RenderSize));
+            double d = p.X < b.Left ? b.Left - p.X : p.X > b.Right ? p.X - b.Right : 0;
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                best = t;
+                bestBounds = b;
+            }
+        }
+        if (best == null || bestDistance > 48) return null;
+
+        double fx = Math.Clamp((p.X - bestBounds.Left) / bestBounds.Width, 0, 0.999);
+        double fy = Math.Clamp((p.Y - bestBounds.Top) / bestBounds.Height, 0, 0.999);
+        static bool Inside(SnapCell c, double fx, double fy, double slack) =>
+            fx >= c.X - slack && fx < c.X + c.W + slack && fy >= c.Y - slack && fy < c.Y + c.H + slack;
+
+        // Hysteresis: keep the current zone near its edges, so it doesn't flicker on a border.
+        if (ReferenceEquals(best, _snapTile) && _snapCell != null && Inside(_snapCell, fx, fy, 0.07)) return (best, _snapCell);
+        foreach (var (cell, _) in best.Zones)
+            if (Inside(cell, fx, fy, 0)) return (best, cell);
+        return (best, best.Zones[0].Cell);
     }
 
-    private SnapCell? SnapCellAt(int x, int y)
+    /// <summary>The aimed tile grows, the others step back; its zone lights up and the layout's other zones show where recent windows go.</summary>
+    private void HighlightSnap()
     {
-        _pendingSnapElement = SnapCellElementAt(x, y);
-        return _pendingSnapElement?.Tag as SnapCell;
+        var accent = _uiBrush.Color;
+        bool fill = AppSettings.Current.SnapAutoFill && _snapCell is { IsFullScreen: false };
+        var grow = new BackEase { Amplitude = 0.4, EasingMode = EasingMode.EaseOut };
+        foreach (var t in _snapTiles)
+        {
+            bool active = ReferenceEquals(t, _snapTile);
+            var zoom = new DoubleAnimation(active ? 1.16 : 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = grow };
+            t.Zoom.BeginAnimation(ScaleTransform.ScaleXProperty, zoom);
+            t.Zoom.BeginAnimation(ScaleTransform.ScaleYProperty, zoom);
+            t.Tile.BeginAnimation(OpacityProperty, new DoubleAnimation(_snapTile == null || active ? 1 : 0.5, TimeSpan.FromMilliseconds(160)));
+            foreach (var (cell, brush) in t.Zones)
+            {
+                var color = !active ? ZoneIdle : ReferenceEquals(cell, _snapCell) ? accent : fill ? ZoneSibling : ZoneIdle;
+                brush.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(color, TimeSpan.FromMilliseconds(130)));
+            }
+        }
     }
 
-    private Border? _pendingSnapElement;
-
-    /// <summary>Highlights the zone under the cursor and moves the on-screen outline to it.</summary>
-    private void SetSnapTarget(SnapCell? cell)
+    /// <summary>Highlights the zone being aimed at and moves the on-screen outline to it.</summary>
+    private void SetSnapTarget(SnapTileView? tile, SnapCell? cell)
     {
-        if (ReferenceEquals(cell, _snapCell)) return;
-        if (_snapCellElement != null) _snapCellElement.Background = SnapCellBrush;
+        if (cell == null) tile = null;
+        if (ReferenceEquals(cell, _snapCell) && ReferenceEquals(tile, _snapTile)) return;
         _snapCell = cell;
-        _snapCellElement = cell == null ? null : _pendingSnapElement;
-        if (_snapCellElement != null) _snapCellElement.Background = _uiBrush;
+        _snapTile = tile;
+        HighlightSnap();
 
-        if (cell == null)
+        if (cell == null || tile == null)
         {
             _preview?.HideZone();
             return;
@@ -898,14 +1028,16 @@ public partial class IslandWindow : Window
             var accent = AppSettings.Current.MatchWindowsColors ? WindowsTheme.Current.AccentOnDark : Colors.White;
             _preview = new SnapPreview(work, accent);
         }
-        _preview.ShowZone(WindowSnapper.ZoneRect(work, cell));
+        var others = AppSettings.Current.SnapAutoFill && !cell.IsFullScreen
+            ? tile.Zones.Where(z => !ReferenceEquals(z.Cell, cell)).Select(z => WindowSnapper.ZoneRect(work, z.Cell)).ToArray()
+            : Array.Empty<WindowApi.RECT>();
+        _preview.ShowZone(WindowSnapper.ZoneRect(work, cell), others);
         WindowApi.RaiseTopmost(_hwnd); // the island stays above the outline
     }
 
     private void ClearSnapTarget()
     {
-        _pendingSnapElement = null;
-        SetSnapTarget(null);
+        SetSnapTarget(null, null);
         _snapPanel = false;
     }
 
@@ -931,10 +1063,10 @@ public partial class IslandWindow : Window
     }
 
     /// <summary>Puts the dropped window in its zone, with a small "got it" bounce of the island.</summary>
-    private void SnapWindow(IntPtr hwnd, SnapCell cell)
+    private void SnapWindow(IntPtr hwnd, SnapCell cell, SnapTileView tile)
     {
         var work = WindowSnapper.WorkAreaAt(_monitor.X + _monitor.Width / 2, _monitor.Y + _monitor.Height / 2);
-        if (!WindowSnapper.Snap(hwnd, work, cell))
+        if (!WindowSnapper.Glide(hwnd, work, cell))
         {
             Wobble();
             return;
@@ -944,10 +1076,10 @@ public partial class IslandWindow : Window
 
         // Fill the rest of the layout with the most recently used windows on this monitor, so the
         // screen is arranged in one move (like picking from Windows' Snap Assist, but automatic).
-        if (!AppSettings.Current.SnapAutoFill || cell.IsFullScreen || !_snapLayouts.TryGetValue(cell, out var layout)) return;
-        var others = layout.Where(z => !ReferenceEquals(z, cell)).ToArray();
+        if (!AppSettings.Current.SnapAutoFill || cell.IsFullScreen) return;
+        var others = tile.Zones.Select(z => z.Cell).Where(z => !ReferenceEquals(z, cell)).ToArray();
         var windows = RecentWindowsOnMyMonitor(hwnd, others.Length);
-        for (int i = 0; i < windows.Count; i++) WindowSnapper.Snap(windows[i], work, others[i]);
+        for (int i = 0; i < windows.Count; i++) WindowSnapper.Glide(windows[i], work, others[i]);
         WindowApi.RaiseTopmost(_hwnd);
     }
 
@@ -1027,6 +1159,7 @@ public partial class IslandWindow : Window
     {
         _height.Kick(260);
         _width.Kick(380);
+        _glowPulse = 1; // a flash of the event horizon
         StartShapeAnimation();
     }
 
@@ -1501,27 +1634,93 @@ public partial class IslandWindow : Window
         var item = _pressedItem;
         if (item == null) return;
         _pressedItem = null;
-        bool dragged = _ghost != null;
-        _ghost?.Close();
+        var ghost = _ghost;
         _ghost = null;
         if (IsMouseCaptured) ReleaseMouseCapture();
-        if (cancelled) return;
+        if (cancelled)
+        {
+            ghost?.Close();
+            return;
+        }
 
         WindowApi.GetCursorPos(out var cursor);
-        if (!dragged)
+        if (ghost == null)
         {
-            _vault.Restore(item); // plain click: back to where it was
+            EmergeWindow(item, null, null); // plain click: back to where it was, out of the notch
         }
         else if (IsOnMyMonitor(cursor.X, cursor.Y) && IsInsideOpenNotch(cursor.X, cursor.Y) && _state == State.Open)
         {
+            ghost.Close();
             return; // dropped back onto the island: keep it inside
         }
         else
         {
-            _vault.RestoreAt(item, cursor.X, cursor.Y);
+            // The card the user is holding grows into the window, title bar under the cursor.
+            EmergeWindow(item, (cursor.X, cursor.Y), ghost.CardRect(cursor.X, cursor.Y));
+            ghost.Close();
         }
         _hovered = false;
         SetState(State.Closed);
+    }
+
+    /// <summary>
+    /// Brings a window back out of the black hole with the emerge animation: from the notch (or the
+    /// dragged card) to its spot, then the real window is shown under the landing snapshot.
+    /// </summary>
+    private void EmergeWindow(AbsorbedWindow item, (int X, int Y)? at, WindowApi.RECT? fromCard)
+    {
+        var dest = _vault.BeginRestore(item, at);
+        if (dest == null) return;
+
+        bool shown = false;
+        void Show()
+        {
+            if (shown) return;
+            shown = true;
+            _vault.FinishRestore(item, at != null);
+        }
+
+        // Safety net: whatever happens to the animation, the window comes back.
+        var net = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+        net.Tick += (_, _) =>
+        {
+            net.Stop();
+            Show();
+        };
+        net.Start();
+
+        try
+        {
+            double s = DpiScale;
+            bool fromNotch = fromCard == null;
+            var from = fromCard ?? NotchMouth(s);
+            var animation = new EmergeAnimation(item.Snapshot, from, dest.Value, fromNotch, s);
+            animation.ContentRendered += (_, _) => animation.Play();
+            animation.Finished += Show;
+            animation.Closed += (_, _) => Show();
+            animation.Show();
+            if (fromNotch)
+            {
+                // It comes out from under the island, and the island gives a little push.
+                WindowApi.RaiseTopmost(_hwnd);
+                _width.Kick(320);
+                _height.Kick(200);
+                _glowPulse = 1;
+                StartShapeAnimation();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Emerge animation failed", ex);
+            Show();
+        }
+    }
+
+    /// <summary>The point windows fall into and come out of, as a tiny rect (physical pixels).</summary>
+    private WindowApi.RECT NotchMouth(double s)
+    {
+        int x = _monitor.X + _monitor.Width / 2, y = _strip.ReservedTop + (int)(18 * s);
+        return new WindowApi.RECT { Left = x, Top = y, Right = x + 1, Bottom = y + 1 };
     }
 
     private bool IsInsideOpenNotch(int x, int y)
@@ -1847,6 +2046,103 @@ public partial class IslandWindow : Window
         ApplyState(animate: true);
     }
 
+    private void ShowAppsView()
+    {
+        if (_appsView) return;
+        ClosePanels();
+        _appsView = true;
+        ApplyState(animate: true);
+    }
+
+    // ---------------------------------------------------------------- hover to open
+
+    /// <summary>Resting the pointer on an icon in the open island this long opens it, no click needed.</summary>
+    private static readonly TimeSpan DwellTime = TimeSpan.FromMilliseconds(1900);
+    private readonly DispatcherTimer _dwellTimer = new() { Interval = DwellTime };
+    private Border? _dwellBar;
+    private Action? _dwellAction;
+
+    /// <summary>A thin bar under an icon that fills up while the pointer rests on it.</summary>
+    private Border MakeDwellBar() => new()
+    {
+        Height = 2,
+        CornerRadius = new CornerRadius(1),
+        Background = _uiBrush,
+        VerticalAlignment = VerticalAlignment.Bottom,
+        Margin = new Thickness(2, 0, 2, 1),
+        Opacity = 0,
+        IsHitTestVisible = false,
+        RenderTransformOrigin = new Point(0.5, 0.5),
+        RenderTransform = new ScaleTransform(0, 1),
+    };
+
+    /// <summary>Gives a header button hover-to-open: its glyph gets a fill bar underneath.</summary>
+    private void AddDwell(Button button, Action open, Func<bool> isOpen)
+    {
+        if (button.Content is not FrameworkElement glyph) return;
+        button.Content = null;
+        glyph.HorizontalAlignment = HorizontalAlignment.Center;
+        glyph.VerticalAlignment = VerticalAlignment.Center;
+        var bar = MakeDwellBar();
+        bar.Margin = new Thickness(0);
+        button.Content = new Grid { Width = 20, Height = 24, Children = { glyph, bar } };
+        AttachDwell(button, bar, open, isOpen);
+    }
+
+    /// <summary>
+    /// Resting on the icon starts filling its bar; when it's full (<see cref="DwellTime"/>) the icon
+    /// opens as if clicked. Leaving or clicking cancels.
+    /// </summary>
+    private void AttachDwell(UIElement host, Border bar, Action open, Func<bool> isOpen)
+    {
+        host.MouseEnter += (_, _) => StartDwell(bar, open, isOpen);
+        host.MouseLeave += (_, _) => CancelDwell(bar);
+        host.PreviewMouseLeftButtonDown += (_, _) => CancelDwell(bar);
+    }
+
+    private void StartDwell(Border bar, Action open, Func<bool> isOpen)
+    {
+        if (_dwellBar != null) CancelDwell(_dwellBar);
+        if (_state != State.Open || _appDrag != null || isOpen()) return;
+        _dwellBar = bar;
+        _dwellAction = open;
+        // Linear on purpose: it's an honest countdown. It only shows after a short beat, so just
+        // passing over the icons doesn't flash bars.
+        ((ScaleTransform)bar.RenderTransform).BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0, 1, DwellTime));
+        bar.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { BeginTime = TimeSpan.FromMilliseconds(220) });
+        _dwellTimer.Stop();
+        _dwellTimer.Start();
+    }
+
+    private void CancelDwell(Border bar)
+    {
+        if (ReferenceEquals(bar, _dwellBar))
+        {
+            _dwellTimer.Stop();
+            _dwellBar = null;
+            _dwellAction = null;
+        }
+        bar.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(140)));
+    }
+
+    private void FinishDwell()
+    {
+        _dwellTimer.Stop();
+        var bar = _dwellBar;
+        var open = _dwellAction;
+        _dwellBar = null;
+        _dwellAction = null;
+        if (bar != null)
+        {
+            // A quick "done" flash: the full bar brightens, then fades.
+            var flash = new DoubleAnimationUsingKeyFrames();
+            flash.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(80))));
+            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(360)), new QuadraticEase()));
+            bar.BeginAnimation(OpacityProperty, flash);
+        }
+        if (_state == State.Open && _appDrag == null) open?.Invoke();
+    }
+
     private const double PlayerRowHeight = 168;
     /// <summary>The Wi‑Fi/Bluetooth lists get more room than the player.</summary>
     private const double ListPanelExtra = 84;
@@ -1961,7 +2257,7 @@ public partial class IslandWindow : Window
 
         if (s.StatusBluetooth && st.HasBluetooth)
             AddStatus(StatusIcons.Bluetooth(Brushes.White, st.BluetoothOn), st.BluetoothOn ? "Bluetooth: on" : "Bluetooth: off",
-                ToggleBluetoothView);
+                ToggleBluetoothView, () => { if (!_btView) ToggleBluetoothView(); }, () => _btView);
 
         if (s.StatusWifi)
         {
@@ -1978,7 +2274,7 @@ public partial class IslandWindow : Window
                 NetworkKind.Cellular => $"Mobile network: {st.NetworkName}",
                 _ => "Not connected",
             };
-            AddStatus(icon, tip, ToggleWifiView);
+            AddStatus(icon, tip, ToggleWifiView, () => { if (!_wifiView) ToggleWifiView(); }, () => _wifiView);
         }
 
         if (s.StatusBattery && st.HasBattery)
@@ -2004,7 +2300,7 @@ public partial class IslandWindow : Window
         _ = fg;
     }
 
-    private void AddStatus(FrameworkElement content, string tip, Action click)
+    private void AddStatus(FrameworkElement content, string tip, Action click, Action? dwellOpen = null, Func<bool>? dwellIsOpen = null)
     {
         content.VerticalAlignment = VerticalAlignment.Center;
         var style = new Style(typeof(Border));
@@ -2020,8 +2316,17 @@ public partial class IslandWindow : Window
             Style = style,
             Cursor = Cursors.Hand,
             ToolTip = tip,
-            Child = content,
         };
+        if (dwellOpen != null)
+        {
+            var bar = MakeDwellBar();
+            item.Child = new Grid { Children = { content, bar } };
+            AttachDwell(item, bar, dwellOpen, dwellIsOpen ?? (() => false));
+        }
+        else
+        {
+            item.Child = content;
+        }
         item.MouseLeftButtonUp += (_, e) =>
         {
             e.Handled = true;
@@ -2046,12 +2351,18 @@ public partial class IslandWindow : Window
     private List<BtDevice> _btPaired = new();
     private bool ListPanelShown => _wifiView || _btView;
 
-    /// <summary>Opens the island on a panel (from <c>--panel</c>): wifi, bluetooth, apps, player, or close.</summary>
+    /// <summary>Opens the island on a panel (from <c>--panel</c>): wifi, bluetooth, apps, player, close, or restore (newest black-hole window).</summary>
     public void ShowPanel(string panel)
     {
         if (panel == "close")
         {
             SetState(State.Closed);
+            return;
+        }
+        if (panel == "restore")
+        {
+            // The newest window in the black hole comes back out (same as clicking it on the shelf).
+            if (_visibleItems.Count > 0) EmergeWindow(_visibleItems[0], null, null);
             return;
         }
         ClosePanels();
@@ -2432,12 +2743,11 @@ public partial class IslandWindow : Window
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         var tile = CreateTile(image, app.Name);
         tile.ToolTip = app.Name;
-        tile.MouseLeftButtonUp += (_, e) =>
-        {
-            e.Handled = true;
-            PinnedApps.Launch(app);
-            CloseAfterAction();
-        };
+        tile.Tag = app;
+        tile.PreviewMouseLeftButtonDown += (_, e) => PressApp(tile, app, e);
+        tile.MouseMove += (_, e) => MoveApp(tile, e);
+        tile.MouseLeftButtonUp += (_, e) => ReleaseApp(tile, app, e);
+        tile.LostMouseCapture += (_, _) => { if (_appDrag?.Tile == tile) DropApp(); };
 
         var menu = new ContextMenu();
         var left = new MenuItem { Header = "Move left", IsEnabled = _pins.Apps.Count > 0 && _pins.Apps[0] != app };
@@ -2512,7 +2822,8 @@ public partial class IslandWindow : Window
             Background = Brushes.Transparent,
             Cursor = Cursors.Hand,
             RenderTransformOrigin = new Point(0.5, 0.5),
-            RenderTransform = scale,
+            // Scale: hover and lift. Rotate: the jiggle while rearranging. Translate: sliding into place.
+            RenderTransform = new TransformGroup { Children = { scale, new RotateTransform(), new TranslateTransform() } },
             Child = new StackPanel { Children = { well, name } },
         };
         var hover = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
@@ -2529,6 +2840,165 @@ public partial class IslandWindow : Window
             name.Foreground = (Brush)FindResource("SecondaryText");
         };
         return tile;
+    }
+
+    // ---- rearranging pinned apps, iOS style: hold (or just drag) an app, the others jiggle and
+    // slide aside to make room, let go and it settles into its new place.
+
+    private sealed class AppDragState
+    {
+        public required PinnedApp App { get; init; }
+        public required Border Tile { get; init; }
+        public required Point Start { get; init; }
+        public required int From { get; init; }
+        public int To { get; set; }
+        public bool Lifted { get; set; }
+        public DispatcherTimer? Hold { get; set; }
+    }
+
+    private AppDragState? _appDrag;
+    private static readonly TimeSpan AppHoldTime = TimeSpan.FromMilliseconds(380);
+
+    private static (ScaleTransform Scale, RotateTransform Rotate, TranslateTransform Move) TileParts(UIElement tile)
+    {
+        var group = (TransformGroup)tile.RenderTransform;
+        return ((ScaleTransform)group.Children[0], (RotateTransform)group.Children[1], (TranslateTransform)group.Children[2]);
+    }
+
+    /// <summary>The app tiles in order (without the "+" tile).</summary>
+    private List<Border> AppTiles() => AppsPanel.Children.OfType<Border>().Where(b => b.Tag is PinnedApp).ToList();
+
+    private void PressApp(Border tile, PinnedApp app, MouseButtonEventArgs e)
+    {
+        if (_appDrag != null) return;
+        int index = _pins.Apps.ToList().IndexOf(app);
+        if (index < 0) return;
+        var drag = new AppDragState { App = app, Tile = tile, Start = e.GetPosition(AppsPanel), From = index, To = index };
+        drag.Hold = new DispatcherTimer { Interval = AppHoldTime };
+        drag.Hold.Tick += (_, _) => LiftApp(drag);
+        drag.Hold.Start();
+        _appDrag = drag;
+        tile.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void MoveApp(Border tile, MouseEventArgs e)
+    {
+        var drag = _appDrag;
+        if (drag == null || drag.Tile != tile) return;
+        var p = e.GetPosition(AppsPanel);
+        double dx = p.X - drag.Start.X, dy = p.Y - drag.Start.Y;
+        if (!drag.Lifted)
+        {
+            if (Math.Abs(dx) < 6 && Math.Abs(dy) < 6) return;
+            LiftApp(drag); // dragging right away works too, no need to wait for the hold
+        }
+
+        // The lifted app follows the pointer (a little give vertically, it stays in its row).
+        var (_, _, move) = TileParts(tile);
+        move.BeginAnimation(TranslateTransform.XProperty, null);
+        move.BeginAnimation(TranslateTransform.YProperty, null);
+        move.X = dx;
+        move.Y = Math.Clamp(dy * 0.35, -14, 14);
+
+        double slot = tile.ActualWidth + tile.Margin.Left + tile.Margin.Right;
+        int to = Math.Clamp(drag.From + (int)Math.Round(dx / slot), 0, _pins.Apps.Count - 1);
+        if (to == drag.To) return;
+        drag.To = to;
+        // The others slide aside to open a gap where it would land.
+        var tiles = AppTiles();
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        for (int i = 0; i < tiles.Count; i++)
+        {
+            if (tiles[i] == tile) continue;
+            double shift = drag.From < to && i > drag.From && i <= to ? -slot
+                : to < drag.From && i >= to && i < drag.From ? slot : 0;
+            TileParts(tiles[i]).Move.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(shift, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
+        }
+    }
+
+    private void ReleaseApp(Border tile, PinnedApp app, MouseButtonEventArgs e)
+    {
+        var drag = _appDrag;
+        if (drag == null || drag.Tile != tile) return;
+        e.Handled = true;
+        if (drag.Lifted)
+        {
+            DropApp();
+            return;
+        }
+        // A plain click: open the app.
+        drag.Hold?.Stop();
+        _appDrag = null;
+        if (tile.IsMouseCaptured) tile.ReleaseMouseCapture();
+        PinnedApps.Launch(app);
+        CloseAfterAction();
+    }
+
+    /// <summary>Picks the app up: it grows and floats, the others start to jiggle.</summary>
+    private void LiftApp(AppDragState drag)
+    {
+        drag.Hold?.Stop();
+        if (drag.Lifted || _appDrag != drag) return;
+        drag.Lifted = true;
+        drag.Tile.ToolTip = null;
+        Panel.SetZIndex(drag.Tile, 10);
+        var (scale, _, _) = TileParts(drag.Tile);
+        var lift = new DoubleAnimation(1.16, TimeSpan.FromMilliseconds(180)) { EasingFunction = new BackEase { Amplitude = 0.5, EasingMode = EasingMode.EaseOut } };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, lift);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, lift);
+        drag.Tile.Opacity = 0.95;
+        drag.Tile.Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 5, Direction = 270, Opacity = 0.55, RenderingBias = RenderingBias.Performance };
+
+        var random = new Random();
+        foreach (var other in AppTiles())
+        {
+            if (other == drag.Tile) continue;
+            var wiggle = new DoubleAnimation(-1.6, 1.6, TimeSpan.FromMilliseconds(125))
+            {
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                BeginTime = TimeSpan.FromMilliseconds(random.Next(0, 125)),
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            };
+            TileParts(other).Rotate.BeginAnimation(RotateTransform.AngleProperty, wiggle);
+        }
+    }
+
+    /// <summary>Lets go: the app glides into its slot, then the new order is saved (the row is rebuilt exactly where things already are).</summary>
+    private void DropApp()
+    {
+        var drag = _appDrag;
+        if (drag == null) return;
+        _appDrag = null;
+        drag.Hold?.Stop();
+        if (drag.Tile.IsMouseCaptured) drag.Tile.ReleaseMouseCapture();
+        if (!drag.Lifted) return;
+
+        var tile = drag.Tile;
+        double slot = tile.ActualWidth + tile.Margin.Left + tile.Margin.Right;
+        var (scale, _, move) = TileParts(tile);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = TimeSpan.FromMilliseconds(200);
+        var settle = new DoubleAnimation((drag.To - drag.From) * slot, duration) { EasingFunction = ease };
+        settle.Completed += (_, _) =>
+        {
+            foreach (var other in AppTiles()) TileParts(other).Rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+            if (drag.To != drag.From) _pins.MoveTo(drag.App, drag.To); // rebuilds the row
+            else
+            {
+                tile.Effect = null;
+                tile.Opacity = 1;
+                tile.ToolTip = drag.App.Name;
+                Panel.SetZIndex(tile, 0);
+            }
+            if (!Notch.IsMouseOver) _closeTimer.Start();
+        };
+        move.BeginAnimation(TranslateTransform.XProperty, settle);
+        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, duration) { EasingFunction = ease });
+        var down = new DoubleAnimation(1, duration) { EasingFunction = ease };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, down);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, down);
     }
 
     private void AppsScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
