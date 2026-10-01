@@ -13,16 +13,19 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `6e01e57` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `390334f` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
-- **Hover to open** (owner's request, exact 1.9 s): resting on Wi‑Fi, Bluetooth, Settings or Apps
-  in the open island opens it; an accent bar fills under the icon meanwhile. Verified on screen
-  (Wi‑Fi and Apps opened by hover alone).
-- **Black hole in and out**: new absorb (caught → swirl → darken → dissolve, frame-clock timed) and
-  a new emerge animation (out of the notch, or the dragged card grows into the window; the real
-  window only appears when it lands; in-flight windows stay saved). Verified with a test window:
-  absorb 64 frames/640 ms, emerge 41 frames/564 ms, frame burst checked.
+- **Black hole looks like a real one** (`390334f`, owner asked for it): caught into a tilted
+  accretion disk under the island, spirals in faster each turn, stretched into a streak, reddens
+  to black, winks out in the notch with a collapsing debris ring; coming out runs it backwards.
+  Verified with frame bursts via `--panel absorb:<hwnd>` / `--panel restore` on a test window
+  (absorb ~87 frames/1.25 s, emerge ~80 frames/1.0 s).
+- **Hover opens instantly** (`390334f`): Wi‑Fi/Bluetooth/Apps 90 ms, Settings 450 ms (it leaves
+  the island); first version (`6e01e57`) used 1.9 s + fill bar, owner said too slow. Views slide
+  in; island opens with a snappier spring, default hover delay 0.12 s, no blur on the open view.
+  Fast-hover not re-screenshotted (owner was using the PC); only the delay changed since the
+  verified version.
 - **Snap panel**: bigger tiles spread out from the hole, forgiving aim (column per tile, zone by
   position + hysteresis), aimed tile grows and shows auto-fill zones, spring outline with the
   layout's other zones, window glides into its zone. Panel/aim/outline verified by screenshot;
@@ -53,7 +56,7 @@ Earlier (2026-09-30 → 10-01, `a66dba9`):
 In order:
 0. **Try the new things from 6e01e57**: drag an app in the Apps view left/right (hold or just
    drag); drop a window on a snap zone and watch it glide; absorb a window and click it on the
-   shelf to see it come back out. Say if 1.9 s hover feels too slow.
+   shelf to see it come back out. Check the island opens fast and smooth enough on hover.
 1. **Try YouTube sign-in** in the Search & play panel (Sign in, top right). Report if Google says
    "this browser or app may not be secure".
 2. **Try the Wi‑Fi panel actions** (click the Wi‑Fi icon in the open island): Join, Disconnect,
@@ -109,6 +112,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 390334f · Real black-hole eat/spit animation (accretion disk spiral, spaghettification, redshift), instant hover-open, smoother island opening · pushed, deployed
 - 2026-10-01 · 6e01e57 · Hover-to-open icons, new absorb + emerge animations, reworked snap panel with gliding windows, drag-to-rearrange apps · pushed, deployed
 - 2026-10-01 · a66dba9 · YouTube account button + full navigation row; calls & mic recordings live in the island (timer, level, mute, open app) · pushed, deployed
 - 2026-10-01 · 26831fe · Block and skip YouTube ads in the Search & play panel · pushed, deployed
