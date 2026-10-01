@@ -13,7 +13,7 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: see Done log top (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `c13684c` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
 - **The island eats windows like a vacuum** (genie/funnel into the notch; the owner drew it:
@@ -112,7 +112,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
-- 2026-10-01 · (see git log) · Island sucks windows in like a vacuum (genie funnel into the notch) and pours them back out · pushed, deployed
+- 2026-10-01 · c13684c · Island sucks windows in like a vacuum (genie funnel into the notch) and pours them back out · pushed, deployed
 - 2026-10-01 · 390334f · Real black-hole eat/spit animation (accretion disk spiral, spaghettification, redshift), instant hover-open, smoother island opening · pushed, deployed
 - 2026-10-01 · 6e01e57 · Hover-to-open icons, new absorb + emerge animations, reworked snap panel with gliding windows, drag-to-rearrange apps · pushed, deployed
 - 2026-10-01 · a66dba9 · YouTube account button + full navigation row; calls & mic recordings live in the island (timer, level, mute, open app) · pushed, deployed
