@@ -13,8 +13,18 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `0f5f4b8` (pushed, installed on the
+Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
+
+- **Island always visible** (`4b739d1`, owner: "on iPhone when you open an app the island doesn't
+  disappear"): over a maximized app the old black menu-bar strip made the black notch blend in, and
+  game mode hid the island on the game's screen. Now: no strip and nothing reserved at the top (apps
+  use the full screen, the island floats over them), a faint rim so it shows on dark apps, and it
+  stays over full-screen games (setting "Hide over full-screen apps" now off by default). Game mode
+  optimizations kept; topmost is re-raised only if the game actually covers it. Verified by
+  screenshot over a maximized dark window and a borderless full-screen window (game mode on).
+  **Owner should re-test FIFA**: the island should stay, and the game should still run smoothly.
+  Note: apps now go under the island, so a tab right in the top middle of Chrome sits under it.
 
 - **Game mode** (`0f5f4b8`, owner saw FIFA hitches + island vanishing): full-screen app in front →
   only that screen's island hides, no animations/topmost churn, slow polls, below-normal priority;
@@ -133,6 +143,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
 - 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
 - 2026-10-01 · 42b094c · Snap layouts as edges & corners (option C), drop panel removed, Windows docking paused per session · pushed, deployed
 - 2026-10-01 · 4312b52 · Smoother black hole (no per-frame shadow, background snapshot); windows come back on the clicked island's screen · pushed, deployed

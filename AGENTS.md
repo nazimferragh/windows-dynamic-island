@@ -50,9 +50,13 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   - Known limit: in high priority the island runs elevated, so Windows blocks drag-and-drop from
     Explorer onto it (pinning via the "+" picker still works). Don't "fix" this by relaxing
     Windows' message filtering (UIPI); that lowers a security boundary.
+- **Always visible, like the iPhone's island** (owner's rule, 2026-10-02): it never disappears
+  over maximized apps or full-screen games, and there is no bar behind it. Nothing is reserved at
+  the top (`TopEdge`): apps use the whole screen and the island floats over them; a faint rim
+  keeps it visible on dark apps. Hiding over full-screen apps is an opt-in setting, off by default.
 - **Light on resources, especially in games** (`GameMode`): when a full-screen app (exclusive or
-  borderless) is in front, only that screen's island hides, nothing animates, no topmost
-  re-asserting, background checks slow to 4–30 s (register new timers with `GameMode.Tune`), and
+  borderless) is in front, the island stays but nothing animates, it only re-raises itself when the
+  game really got above it, background checks slow to 4–30 s (register new timers with `GameMode.Tune`), and
   the process drops to below-normal priority. The hidden YouTube panel sleeps (`TrySuspendAsync`)
   unless it's playing audio. Never add always-running per-frame work; measured target in game
   mode: well under 1% of one core.
@@ -87,7 +91,7 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   preview. Owner rejected: orbit/accretion disk, sliced genie, mesh genie. For any change to this
   motion, update the preview first and get approval, then port.
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
-- **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
+- **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar and any strip behind the island). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the
   island's own Wi‑Fi view (`WifiService`, `WifiPasswordWindow`), not Windows' flyout. Icons are our own drawings in the
   iOS style (don't ship Apple's artwork). Desktop PCs simply have no battery item.
