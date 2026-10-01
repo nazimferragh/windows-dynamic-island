@@ -13,9 +13,12 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `9a47ceb` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `4312b52` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **Black hole optimized + per-screen restore** (`4312b52`): no per-frame shadow, background snapshot
+  capture; a window clicked in an island comes back on that island's screen. Verified: restore@1
+  moved the test window to the portrait screen; emerge ~120 fps (was 10–30).
 - **Drop to eat** (`9a47ceb`): as in the preview, drag near → island grows → "Let go to tuck it away"
   → release eats at once. Snap layouts panel now only with **Shift** held during the drag.
   **Open question for the owner: where should snap layouts live?** (Shift is a stopgap.)
@@ -121,6 +124,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 4312b52 · Smoother black hole (no per-frame shadow, background snapshot); windows come back on the clicked island's screen · pushed, deployed
 - 2026-10-01 · 9a47ceb · Drop-to-eat like the preview; snap panel only with Shift · pushed, deployed
 - 2026-10-01 · f50b88d · Black hole uses the owner-approved Morph animation (from the preview artifact) · pushed, deployed
 - 2026-10-01 · 39bdbe1 · Genie funnel rendered as one smooth mesh (no slices), neck tied to the mouth · pushed, deployed
