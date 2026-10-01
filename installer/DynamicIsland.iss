@@ -2,7 +2,7 @@
 ; Built by build.ps1, which passes /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.6.0"
+  #define AppVersion "0.7.0"
 #endif
 
 #define AppName "Dynamic Island"

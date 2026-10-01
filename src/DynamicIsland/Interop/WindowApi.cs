@@ -232,6 +232,14 @@ public static class WindowApi
     /// Lets mouse input fall through one of our overlay windows, and keeps it out of the taskbar and
     /// off any single virtual desktop (WS_EX_APPWINDOW, added by WPF, is removed).
     /// </summary>
+    /// <summary>Turns mouse click-through on or off (the window never takes focus either way).</summary>
+    public static void SetClickThrough(IntPtr hwnd, bool through)
+    {
+        long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        style = through ? style | WS_EX_TRANSPARENT : style & ~(long)WS_EX_TRANSPARENT;
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
+    }
+
     public static void MakeClickThrough(IntPtr hwnd)
     {
         long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();

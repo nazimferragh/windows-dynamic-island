@@ -197,6 +197,24 @@
                            FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0" />
             </Grid>
 
+            <!-- A window is being dragged up to the island, with snap layouts on: the drop panel.
+                 Layout tiles on both sides (built in code), the black hole in the middle. -->
+            <Grid x:Name="DropPanelContent" Width="660" Height="146" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <StackPanel x:Name="SnapLeft" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="24,58,0,0" />
+                <Grid x:Name="DropHole" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,46,0,0">
+                    <Ellipse Width="26" Height="26" Fill="Black" />
+                    <Ellipse StrokeThickness="3" Stroke="{StaticResource HoleRingBrush}" RenderTransformOrigin="0.5,0.5" Margin="8">
+                        <Ellipse.RenderTransform>
+                            <RotateTransform x:Name="DropHoleSpin" />
+                        </Ellipse.RenderTransform>
+                    </Ellipse>
+                </Grid>
+                <StackPanel x:Name="SnapRight" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,58,24,0" />
+                <TextBlock x:Name="DropLabel" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,121,0,0"
+                           FontSize="11.5" FontWeight="SemiBold" Foreground="White" />
+            </Grid>
+
             <!-- Open. -->
             <!-- The shelf row sits below the notch's normal open height, so it's only revealed
                  (the notch grows taller) when windows are inside. -->

@@ -32,11 +32,23 @@ public sealed class AppSettings
     // Black hole
     public bool BlackHoleEnabled { get; set; } = true;
     public bool AbsorbShortcutEnabled { get; set; } = true;
+    public bool SnapLayoutsEnabled { get; set; } = true;
 
     // Downloads
     public bool DownloadsEnabled { get; set; } = true;
     public bool AnimateDownloadStart { get; set; } = true;
     public int KeepFinishedDownloadsMinutes { get; set; } = 3;
+
+    // Menu bar
+    public bool MenuBarEnabled { get; set; } = true;
+    public bool MenuBarAppName { get; set; } = true;
+    public bool MenuBarNetwork { get; set; } = true;
+    public bool MenuBarBluetooth { get; set; } = true;
+    public bool MenuBarBattery { get; set; } = true;
+    public bool MenuBarBatteryPercent { get; set; } = true;
+    public bool MenuBarSearch { get; set; } = true;
+    public bool MenuBarQuickSettings { get; set; } = true;
+    public bool MenuBarClock { get; set; } = true;
 
     // Pinned apps
     public bool PinnedAppsEnabled { get; set; } = true;
