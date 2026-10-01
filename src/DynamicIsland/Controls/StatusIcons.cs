@@ -121,6 +121,34 @@ public static class StatusIcons
         return canvas;
     }
 
+    /// <summary>An icon for a kind of Bluetooth device (headphones, keyboard…), same stroke style as the rest.</summary>
+    public static FrameworkElement Device(Services.BtKind kind, Brush fg)
+    {
+        string data = kind switch
+        {
+            Services.BtKind.Headphones => "M 2.5,10 V 8 A 5.5,5.5 0 0 1 13.5,8 V 10 M 2.5,10 H 4.5 V 14 H 3.5 A 1,1 0 0 1 2.5,13 Z M 13.5,10 H 11.5 V 14 H 12.5 A 1,1 0 0 0 13.5,13 Z",
+            Services.BtKind.Speaker => "M 4.5,1.5 H 11.5 A 1,1 0 0 1 12.5,2.5 V 13.5 A 1,1 0 0 1 11.5,14.5 H 4.5 A 1,1 0 0 1 3.5,13.5 V 2.5 A 1,1 0 0 1 4.5,1.5 Z M 8,7.3 A 2.7,2.7 0 1 0 8,12.7 A 2.7,2.7 0 1 0 8,7.3 Z M 8,3.6 V 4.4",
+            Services.BtKind.Keyboard => "M 1.5,4.5 H 14.5 A 1,1 0 0 1 15.5,5.5 V 11.5 A 1,1 0 0 1 14.5,12.5 H 1.5 A 1,1 0 0 1 0.5,11.5 V 5.5 A 1,1 0 0 1 1.5,4.5 Z M 3.5,7 H 4 M 6,7 H 6.5 M 8.5,7 H 9 M 11,7 H 11.5 M 4.5,10 H 11.5",
+            Services.BtKind.Mouse => "M 8,1.5 A 4.5,4.5 0 0 1 12.5,6 V 10 A 4.5,4.5 0 0 1 3.5,10 V 6 A 4.5,4.5 0 0 1 8,1.5 Z M 8,1.5 V 6",
+            Services.BtKind.Phone => "M 5.5,1 H 10.5 A 1.5,1.5 0 0 1 12,2.5 V 13.5 A 1.5,1.5 0 0 1 10.5,15 H 5.5 A 1.5,1.5 0 0 1 4,13.5 V 2.5 A 1.5,1.5 0 0 1 5.5,1 Z M 7,13 H 9",
+            Services.BtKind.Computer => "M 2.5,3 H 13.5 A 1,1 0 0 1 14.5,4 V 10.5 H 1.5 V 4 A 1,1 0 0 1 2.5,3 Z M 0.5,10.5 H 15.5 V 11.5 A 1,1 0 0 1 14.5,12.5 H 1.5 A 1,1 0 0 1 0.5,11.5 Z",
+            Services.BtKind.Gamepad => "M 4.5,4.5 H 11.5 A 4,4 0 0 1 15,9.5 L 14.4,12 A 1.6,1.6 0 0 1 11.6,12.6 L 10.5,11 H 5.5 L 4.4,12.6 A 1.6,1.6 0 0 1 1.6,12 L 1,9.5 A 4,4 0 0 1 4.5,4.5 Z M 4.5,7 V 9 M 3.5,8 H 5.5 M 11,7.5 H 11.2 M 12,8.7 H 12.2",
+            _ => "M 4.5,4.8 L 11.3,10.6 L 7.8,13.6 V 2.4 L 11.3,5.4 L 4.5,11.2",
+        };
+        return new Path
+        {
+            Data = Geometry.Parse(data),
+            Stroke = fg,
+            StrokeThickness = 1.35,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Width = 16,
+            Height = 16,
+            Stretch = Stretch.None,
+        };
+    }
+
     private static readonly Brush ChargingGreen = Frozen(Color.FromRgb(0x34, 0xC7, 0x59));
     private static readonly Brush LowRed = Frozen(Color.FromRgb(0xFF, 0x3B, 0x30));
 

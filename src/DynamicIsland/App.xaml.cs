@@ -64,6 +64,23 @@ public partial class App : Application
             return;
         }
 
+        // Opens a panel of the running island: DynamicIsland.exe --panel wifi|bluetooth|apps|player|close
+        int panelArg = Array.IndexOf(e.Args, "--panel");
+        if (panelArg >= 0 && panelArg + 1 < e.Args.Length)
+        {
+            Guardian.RequestPanel(e.Args[panelArg + 1]);
+            Shutdown();
+            return;
+        }
+
+        // Support/diagnostics: logs what the Wi‑Fi and Bluetooth panels would show, then exits.
+        if (e.Args.Contains("--diag"))
+        {
+            await RunDiagnosticsAsync();
+            Shutdown();
+            return;
+        }
+
         // The companion process that brings the island back if it dies. It has no UI of its own.
         if (e.Args.Contains(Guardian.WatchdogArg))
         {
@@ -188,6 +205,11 @@ public partial class App : Application
         _quitRequestCheck.Tick += (_, _) =>
         {
             if (Guardian.TakeOpenSettingsRequest()) OpenSettings();
+            if (Guardian.TakePanelRequest() is { } panel)
+            {
+                var primary = Forms.Screen.PrimaryScreen!.Bounds;
+                (_islands.FirstOrDefault(i => i.Monitor.X == primary.X && i.Monitor.Y == primary.Y) ?? _islands.FirstOrDefault())?.ShowPanel(panel);
+            }
             if (!Guardian.QuitRequested()) return;
             Log.Info("Quit requested by the installer");
             Guardian.SignalQuit();
@@ -420,6 +442,28 @@ public partial class App : Application
         // Never leave the user without notifications: banners are hidden only while the island shows them.
         if (s.ShouldHideBanners) NotificationBanners.HideAll();
         else NotificationBanners.RestoreAll();
+    }
+
+    private static async System.Threading.Tasks.Task RunDiagnosticsAsync()
+    {
+        try
+        {
+            Log.Info("DIAG Wi‑Fi available: " + await WifiService.InitAsync() + ", radio on: " + WifiService.RadioOn);
+            foreach (var n in await WifiService.ScanAsync())
+                Log.Info($"DIAG Wi‑Fi '{n.Ssid}' bars={n.Bars} secured={n.Secured} connected={n.Connected} saved={n.Saved}");
+            Log.Info("DIAG Wi‑Fi names hidden: " + WifiService.NamesHidden + ", saved profiles: " + string.Join(", ", WifiService.SavedNetworks()));
+            Log.Info("DIAG Bluetooth available: " + await BluetoothService.InitAsync() + ", radio on: " + BluetoothService.RadioOn);
+            foreach (var d in await BluetoothService.GetPairedAsync())
+                Log.Info($"DIAG BT paired '{d.Name}' kind={d.Kind} connected={d.Connected} le={d.IsLowEnergy}");
+            BluetoothService.StartDiscovery();
+            await System.Threading.Tasks.Task.Delay(8000);
+            foreach (var d in BluetoothService.Nearby()) Log.Info($"DIAG BT nearby '{d.Name}' kind={d.Kind}");
+            BluetoothService.StopDiscovery();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("DIAG failed", ex);
+        }
     }
 
     private static bool HighPriorityChosen()

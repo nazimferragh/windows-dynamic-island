@@ -135,6 +135,32 @@ public static class Guardian
         catch { }
     }
 
+    /// <summary>Asks the running island to open a panel ("wifi", "bluetooth", "apps", "player" or "close").</summary>
+    public static void RequestPanel(string panel)
+    {
+        try
+        {
+            using var ours = Registry.CurrentUser.CreateSubKey(OurKey);
+            ours.SetValue("PanelRequested", panel, RegistryValueKind.String);
+        }
+        catch { }
+    }
+
+    public static string? TakePanelRequest()
+    {
+        try
+        {
+            using var ours = Registry.CurrentUser.OpenSubKey(OurKey, writable: true);
+            if (ours?.GetValue("PanelRequested") is not string panel) return null;
+            ours.DeleteValue("PanelRequested", throwOnMissingValue: false);
+            return panel;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>True (once) if someone asked for the Settings window.</summary>
     public static bool TakeOpenSettingsRequest()
     {

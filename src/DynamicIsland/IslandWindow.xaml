@@ -225,7 +225,7 @@
                 </Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="38" />
-                    <RowDefinition Height="168" />
+                    <RowDefinition x:Name="PlayerRow" Height="168" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -364,7 +364,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Margin="2,0,2,6">
-                        <TextBlock Text="Wi‑Fi" FontSize="14" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PanelTitle" Text="Wi‑Fi" FontSize="14" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" />
                         <Border x:Name="WifiSwitch" Width="38" Height="20" CornerRadius="10" HorizontalAlignment="Right" Cursor="Hand"
                                 MouseLeftButtonUp="WifiSwitch_Click">
                             <Ellipse x:Name="WifiSwitchKnob" Width="14" Height="14" Fill="White" HorizontalAlignment="Right" Margin="3,0,3,0" />
@@ -376,7 +376,7 @@
                     <Grid Grid.Row="2" Margin="2,4,2,0">
                         <TextBlock x:Name="WifiStatus" FontSize="11" Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis" Margin="0,0,110,0" />
-                        <TextBlock x:Name="WifiSettingsLink" Text="Wi‑Fi settings" FontSize="11" Foreground="{StaticResource SecondaryText}"
+                        <TextBlock x:Name="WifiSettingsLink" Text="More settings" FontSize="11" Foreground="{StaticResource SecondaryText}"
                                    HorizontalAlignment="Right" Cursor="Hand" MouseLeftButtonUp="WifiSettings_Click" />
                     </Grid>
                 </Grid>

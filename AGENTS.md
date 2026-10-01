@@ -59,7 +59,7 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 - **Snap layouts live in the island's drop panel** (`WindowSnapper`, `SnapPreview`): six layouts
   around the black hole, Windows' own snap bar/preview stay off. On portrait monitors every layout
   is transposed (halves → top/bottom). Works on Windows 10 too (which has no snap layouts).
-- **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible): the island's top row shows
+- **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the
   island's own Wi‑Fi view (`WifiService`, `WifiPasswordWindow`), not Windows' flyout. Icons are our own drawings in the
   iOS style (don't ship Apple's artwork). Desktop PCs simply have no battery item.
@@ -74,3 +74,10 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 - Install silently to test the real thing: `dist\DynamicIsland-Setup-<v>.exe /VERYSILENT`, then run
   `%LOCALAPPDATA%\Programs\Dynamic Island\DynamicIsland.exe`. Logs: `%LOCALAPPDATA%\DynamicIsland\log.txt`.
 - Verify UI changes on screen (screenshots) before calling them done.
+
+## Testing helpers
+
+- `DynamicIsland.exe --panel wifi|bluetooth|apps|player|close` asks the running island to open a
+  panel (works even when the island runs elevated and test clicks can't reach it).
+- `DynamicIsland.exe --diag` logs what the Wi‑Fi and Bluetooth panels would list, then exits.
+- Opening the app again while it runs opens Settings.

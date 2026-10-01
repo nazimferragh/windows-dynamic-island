@@ -341,11 +341,7 @@ public partial class IslandWindow : Window
     {
         if (_state == state) return;
         _state = state;
-        if (state != State.Open)
-        {
-            _appsView = false; // next time it opens on the player
-            _wifiView = false;
-        }
+        if (state != State.Open) ClosePanels(); // next time it opens on the player
         ApplyState(animate: true);
     }
 
@@ -358,6 +354,7 @@ public partial class IslandWindow : Window
         {
             case State.Open:
                 double h = OpenShape.Height;
+                if (ListPanelShown) return new Silhouette(640, h + ListPanelExtra, 20, 28);
                 if (DownloadsShown && _downloads.Items.Count > 0) h += _downloadsHeight;
                 if (hasVault) h += 130;
                 return new Silhouette(640, h, 20, 28);
@@ -416,12 +413,13 @@ public partial class IslandWindow : Window
         Reveal(DropPanelContent, _state == State.Attract && _snapPanel, animate);
         if (_snapPanel) DropLabel.Text = DropLabelText();
         Reveal(OpenContent, _state == State.Open, animate);
-        PlayerGrid.Visibility = _appsView || _wifiView ? Visibility.Collapsed : Visibility.Visible;
+        PlayerGrid.Visibility = _appsView || ListPanelShown ? Visibility.Collapsed : Visibility.Visible;
         AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
-        WifiGrid.Visibility = _wifiView ? Visibility.Visible : Visibility.Collapsed;
+        WifiGrid.Visibility = ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
+        PlayerRow.Height = new GridLength(ListPanelShown ? PlayerRowHeight + ListPanelExtra : PlayerRowHeight);
         AppsGlyphPath.Fill = _appsView ? Brushes.White : (Brush)FindResource("SecondaryText");
-        DownloadsSection.Visibility = _state == State.Open && DownloadsShown && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        ShelfSection.Visibility = _state == State.Open && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsSection.Visibility = _state == State.Open && !ListPanelShown && DownloadsShown && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ShelfSection.Visibility = _state == State.Open && !ListPanelShown && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         SetDownloadArrowAnimating(closed && dlActive);
 
         bool playing = _snapshot?.IsPlaying == true;
@@ -1823,10 +1821,15 @@ public partial class IslandWindow : Window
 
     private void AppsButton_Click(object sender, RoutedEventArgs e)
     {
-        _appsView = !_appsView;
-        _wifiView = false;
+        bool show = !_appsView;
+        ClosePanels();
+        _appsView = show;
         ApplyState(animate: true);
     }
+
+    private const double PlayerRowHeight = 168;
+    /// <summary>The Wi‑Fi/Bluetooth lists get more room than the player.</summary>
+    private const double ListPanelExtra = 84;
 
     // ---------------------------------------------------------------- status icons (top row)
 
@@ -1839,7 +1842,7 @@ public partial class IslandWindow : Window
 
         if (s.StatusBluetooth && st.HasBluetooth)
             AddStatus(StatusIcons.Bluetooth(Brushes.White, st.BluetoothOn), st.BluetoothOn ? "Bluetooth: on" : "Bluetooth: off",
-                () => OpenUri("ms-settings:bluetooth"));
+                ToggleBluetoothView);
 
         if (s.StatusWifi)
         {
@@ -1914,49 +1917,68 @@ public partial class IslandWindow : Window
         catch (Exception ex) { Log.Error($"Couldn't open {uri}", ex); }
     }
 
-    // ---------------------------------------------------------------- Wi‑Fi view
+    // ---------------------------------------------------------------- Wi‑Fi and Bluetooth panels
 
+    // One panel area in the open island shows either Wi‑Fi or Bluetooth: a title with an on/off
+    // switch, a list whose rows show their actions on hover, and a status line.
     private bool _wifiView;
-    private int _wifiScanVersion;
+    private bool _btView;
+    private int _panelVersion;
+    private List<BtDevice> _btPaired = new();
+    private bool ListPanelShown => _wifiView || _btView;
+
+    /// <summary>Opens the island on a panel (from <c>--panel</c>): wifi, bluetooth, apps, player, or close.</summary>
+    public void ShowPanel(string panel)
+    {
+        if (panel == "close")
+        {
+            SetState(State.Closed);
+            return;
+        }
+        ClosePanels();
+        SetState(State.Open);
+        switch (panel)
+        {
+            case "wifi": ToggleWifiView(); break;
+            case "bluetooth": ToggleBluetoothView(); break;
+            case "apps": _appsView = true; ApplyState(animate: true); break;
+            default: ApplyState(animate: true); break;
+        }
+    }
 
     private void ToggleWifiView()
     {
-        _wifiView = !_wifiView;
-        _appsView = false;
+        bool show = !_wifiView;
+        ClosePanels();
+        _wifiView = show;
         ApplyState(animate: true);
         if (_wifiView) _ = RefreshWifiAsync();
     }
 
-    private async System.Threading.Tasks.Task RefreshWifiAsync()
+    private void ToggleBluetoothView()
     {
-        int version = ++_wifiScanVersion;
-        WifiStatus.Text = "Looking for networks…";
-        RenderWifiSwitch();
-        if (!await WifiService.InitAsync())
-        {
-            WifiList.Children.Clear();
-            WifiStatus.Text = "This PC has no Wi‑Fi, or Windows didn't allow access to it.";
-            return;
-        }
-        RenderWifiSwitch();
-        if (!WifiService.RadioOn)
-        {
-            WifiList.Children.Clear();
-            WifiStatus.Text = "Wi‑Fi is off.";
-            return;
-        }
-        var networks = await WifiService.ScanAsync();
-        if (version != _wifiScanVersion || !_wifiView) return;
-        WifiList.Children.Clear();
-        foreach (var n in networks) WifiList.Children.Add(CreateWifiRow(n));
-        WifiStatus.Text = WifiService.NamesHidden
-            ? "Windows hides network names until location access is on (Settings › Privacy › Location)."
-            : networks.Count == 0 ? "No networks found." : $"{networks.Count} networks nearby";
+        bool show = !_btView;
+        ClosePanels();
+        _btView = show;
+        ApplyState(animate: true);
+        if (_btView) _ = RefreshBluetoothAsync(full: true);
     }
 
-    private void RenderWifiSwitch()
+    /// <summary>Leaves the Wi‑Fi/Bluetooth/apps views (and stops looking for Bluetooth devices).</summary>
+    private void ClosePanels()
     {
-        bool on = WifiService.RadioOn;
+        if (_btView)
+        {
+            BluetoothService.NearbyChanged -= OnNearbyChanged;
+            BluetoothService.StopDiscovery();
+        }
+        _wifiView = false;
+        _btView = false;
+        _appsView = false;
+    }
+
+    private void RenderPanelSwitch(bool on)
+    {
         WifiSwitch.Background = on ? _uiBrush : Frozen(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
         WifiSwitchKnob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         WifiSwitchKnob.Fill = on && AppSettings.Current.MatchWindowsColors ? Brushes.Black : Brushes.White;
@@ -1965,16 +1987,26 @@ public partial class IslandWindow : Window
     private async void WifiSwitch_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        await WifiService.SetRadioAsync(!WifiService.RadioOn);
-        await System.Threading.Tasks.Task.Delay(700);
-        await RefreshWifiAsync();
+        if (_wifiView)
+        {
+            await WifiService.SetRadioAsync(!WifiService.RadioOn);
+            await System.Threading.Tasks.Task.Delay(700);
+            await RefreshWifiAsync();
+        }
+        else if (_btView)
+        {
+            await BluetoothService.SetRadioAsync(!BluetoothService.RadioOn);
+            await System.Threading.Tasks.Task.Delay(700);
+            await RefreshBluetoothAsync(full: true);
+        }
     }
 
     private void WifiSettings_Click(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
+        string uri = _btView ? "ms-settings:bluetooth" : WifiService.NamesHidden ? "ms-settings:privacy-location" : "ms-settings:network-wifi";
         CloseAfterAction();
-        OpenUri(WifiService.NamesHidden ? "ms-settings:privacy-location" : "ms-settings:network-wifi");
+        OpenUri(uri);
     }
 
     private void WifiScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -1983,23 +2015,221 @@ public partial class IslandWindow : Window
         e.Handled = true;
     }
 
+    // ---- Wi‑Fi
+
+    private async System.Threading.Tasks.Task RefreshWifiAsync()
+    {
+        int version = ++_panelVersion;
+        PanelTitle.Text = "Wi‑Fi";
+        if (WifiList.Tag as string != "wifi") WifiList.Children.Clear(); // don't show the other panel's list while scanning
+        WifiList.Tag = "wifi";
+        WifiStatus.Text = "Looking for networks…";
+        if (!await WifiService.InitAsync())
+        {
+            WifiList.Children.Clear();
+            RenderPanelSwitch(false);
+            WifiStatus.Text = "This PC has no Wi‑Fi, or Windows didn't allow access to it.";
+            return;
+        }
+        RenderPanelSwitch(WifiService.RadioOn);
+        if (!WifiService.RadioOn)
+        {
+            WifiList.Children.Clear();
+            WifiStatus.Text = "Wi‑Fi is off.";
+            return;
+        }
+        var networks = await WifiService.ScanAsync();
+        if (version != _panelVersion || !_wifiView) return;
+        WifiList.Children.Clear();
+        foreach (var n in networks) WifiList.Children.Add(CreateWifiRow(n));
+        WifiStatus.Text = WifiService.NamesHidden
+            ? "Windows hides network names until location access is on (More settings)."
+            : networks.Count == 0 ? "No networks found." : $"{networks.Count} networks nearby";
+    }
+
     private FrameworkElement CreateWifiRow(WifiNetwork n)
     {
         int level = n.Bars >= 4 ? 3 : n.Bars >= 2 ? 2 : 1;
-        var grid = new Grid { Height = 30 };
+        var actions = new List<(string, Func<System.Threading.Tasks.Task>)>();
+        if (n.Connected) actions.Add(("Disconnect", () => WifiDisconnectAsync(n)));
+        else actions.Add(("Join", () => WifiJoinAsync(n)));
+        if (n.Saved) actions.Add(("Forget", () => WifiForgetAsync(n)));
+        return CreateListRow(StatusIcons.Wifi(Brushes.White, level, offline: false), n.Ssid, n.Connected,
+            n.Connected ? "Connected" : n.Saved ? "Saved" : "", n.Connected ? _uiBrush : (Brush)FindResource("TertiaryText"),
+            n.Secured, actions);
+    }
+
+    private async System.Threading.Tasks.Task WifiJoinAsync(WifiNetwork n)
+    {
+        WifiStatus.Text = $"Joining {n.Ssid}…";
+        var result = await WifiService.JoinAsync(n);
+        switch (result)
+        {
+            case WifiJoinResult.Joined:
+                WifiStatus.Text = $"Connected to {n.Ssid}";
+                await RefreshWifiAsync();
+                break;
+            case WifiJoinResult.NeedsPassword:
+            case WifiJoinResult.WrongPassword:
+                // New network, or its password changed: ask for it.
+                CloseAfterAction();
+                WifiPasswordWindow.ShowFor(n, _monitor);
+                break;
+            default:
+                WifiStatus.Text = $"Couldn't join {n.Ssid}. Move closer to the router and try again.";
+                break;
+        }
+    }
+
+    private async System.Threading.Tasks.Task WifiDisconnectAsync(WifiNetwork n)
+    {
+        WifiService.Disconnect();
+        WifiStatus.Text = $"Disconnected from {n.Ssid}";
+        await System.Threading.Tasks.Task.Delay(900);
+        await RefreshWifiAsync();
+    }
+
+    private async System.Threading.Tasks.Task WifiForgetAsync(WifiNetwork n)
+    {
+        bool ok = WifiService.Forget(n.Ssid);
+        WifiStatus.Text = ok ? $"Forgot {n.Ssid}. Joining again will ask for the password." : $"Couldn't forget {n.Ssid}.";
+        await System.Threading.Tasks.Task.Delay(600);
+        await RefreshWifiAsync();
+    }
+
+    // ---- Bluetooth
+
+    private async System.Threading.Tasks.Task RefreshBluetoothAsync(bool full)
+    {
+        int version = ++_panelVersion;
+        PanelTitle.Text = "Bluetooth";
+        if (WifiList.Tag as string != "bluetooth") WifiList.Children.Clear();
+        WifiList.Tag = "bluetooth";
+        if (full)
+        {
+            WifiStatus.Text = "Looking for devices…";
+            if (!await BluetoothService.InitAsync())
+            {
+                WifiList.Children.Clear();
+                RenderPanelSwitch(false);
+                WifiStatus.Text = "This PC has no Bluetooth, or Windows didn't allow access to it.";
+                return;
+            }
+            RenderPanelSwitch(BluetoothService.RadioOn);
+            if (!BluetoothService.RadioOn)
+            {
+                WifiList.Children.Clear();
+                WifiStatus.Text = "Bluetooth is off.";
+                BluetoothService.StopDiscovery();
+                return;
+            }
+            _btPaired = await BluetoothService.GetPairedAsync();
+            if (version != _panelVersion || !_btView) return;
+            BluetoothService.NearbyChanged -= OnNearbyChanged;
+            BluetoothService.NearbyChanged += OnNearbyChanged;
+            BluetoothService.StartDiscovery();
+        }
+        RenderBluetoothList();
+    }
+
+    private DispatcherOperation? _nearbyRefresh;
+
+    /// <summary>Nearby devices come and go while the view is open (on a background thread).</summary>
+    private void OnNearbyChanged()
+    {
+        if (_nearbyRefresh is { Status: DispatcherOperationStatus.Pending }) return;
+        _nearbyRefresh = Dispatcher.InvokeAsync(() => { if (_btView) RenderBluetoothList(); }, DispatcherPriority.Background);
+    }
+
+    private void RenderBluetoothList()
+    {
+        double offset = WifiScroll.VerticalOffset;
+        WifiList.Children.Clear();
+        WifiList.Children.Add(SectionLabel("My devices"));
+        if (_btPaired.Count == 0) WifiList.Children.Add(SectionHint("No paired devices yet."));
+        foreach (var d in _btPaired)
+        {
+            var actions = new List<(string, Func<System.Threading.Tasks.Task>)>();
+            if (!d.IsLowEnergy) actions.Add(d.Connected ? ("Disconnect", () => BtConnectAsync(d, false)) : ("Connect", () => BtConnectAsync(d, true)));
+            actions.Add(("Forget", () => BtForgetAsync(d)));
+            WifiList.Children.Add(CreateListRow(StatusIcons.Device(d.Kind, Brushes.White), d.Name, d.Connected,
+                d.Connected ? "Connected" : "Not connected", d.Connected ? _uiBrush : (Brush)FindResource("TertiaryText"), false, actions));
+        }
+
+        WifiList.Children.Add(SectionLabel("Other devices"));
+        var nearby = BluetoothService.Nearby();
+        if (nearby.Count == 0) WifiList.Children.Add(SectionHint("Searching… Put your device in pairing mode."));
+        foreach (var d in nearby)
+            WifiList.Children.Add(CreateListRow(StatusIcons.Device(d.Kind, Brushes.White), d.Name, false, "", (Brush)FindResource("TertiaryText"), false,
+                new List<(string, Func<System.Threading.Tasks.Task>)> { ("Pair", () => BtPairAsync(d)) }));
+        WifiScroll.ScrollToVerticalOffset(offset);
+        WifiStatus.Text = $"{_btPaired.Count(d => d.Connected)} connected · {nearby.Count} nearby";
+    }
+
+    private async System.Threading.Tasks.Task BtConnectAsync(BtDevice d, bool connect)
+    {
+        WifiStatus.Text = (connect ? "Connecting " : "Disconnecting ") + d.Name + "…";
+        bool ok = await BluetoothService.SetConnectedAsync(d, connect);
+        if (!ok) WifiStatus.Text = $"Couldn't {(connect ? "connect" : "disconnect")} {d.Name}. Make sure it's on and nearby.";
+        await System.Threading.Tasks.Task.Delay(connect ? 2500 : 1200); // the device takes a moment
+        await RefreshBluetoothAsync(full: true);
+    }
+
+    private async System.Threading.Tasks.Task BtForgetAsync(BtDevice d)
+    {
+        WifiStatus.Text = $"Forgetting {d.Name}…";
+        bool ok = await BluetoothService.ForgetAsync(d);
+        WifiStatus.Text = ok ? $"Forgot {d.Name}" : $"Couldn't forget {d.Name}";
+        await RefreshBluetoothAsync(full: true);
+    }
+
+    private async System.Threading.Tasks.Task BtPairAsync(BtDevice d)
+    {
+        WifiStatus.Text = $"Pairing with {d.Name}…";
+        bool ok = await BluetoothService.PairAsync(d, (prompt, pin) =>
+            System.Threading.Tasks.TaskExtensions.Unwrap(Dispatcher.InvokeAsync(() => BluetoothPairWindow.AskAsync(d.Name, prompt, pin, _monitor)).Task));
+        WifiStatus.Text = ok ? $"Paired with {d.Name}" : $"Couldn't pair with {d.Name}. Put it in pairing mode and try again.";
+        if (ok) await RefreshBluetoothAsync(full: true);
+    }
+
+    // ---- shared list pieces
+
+    private TextBlock SectionLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = (Brush)FindResource("SecondaryText"),
+        Margin = new Thickness(6, 6, 0, 2),
+    };
+
+    private TextBlock SectionHint(string text) => new()
+    {
+        Text = text,
+        FontSize = 11.5,
+        Foreground = (Brush)FindResource("TertiaryText"),
+        Margin = new Thickness(6, 2, 0, 4),
+    };
+
+    /// <summary>
+    /// A list row: icon, name, and on the right a status ("Connected", "Saved") that turns into
+    /// action buttons on hover (Join · Forget, Connect · Forget, Pair…).
+    /// </summary>
+    private FrameworkElement CreateListRow(FrameworkElement icon, string title, bool bold, string idleText, Brush idleBrush, bool locked,
+        List<(string Label, Func<System.Threading.Tasks.Task> Run)> actions)
+    {
+        var grid = new Grid { Height = 32 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var icon = StatusIcons.Wifi(Brushes.White, level, offline: false);
         icon.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(icon);
 
         var name = new TextBlock
         {
-            Text = n.Ssid,
+            Text = title,
             FontSize = 12.5,
-            FontWeight = n.Connected ? FontWeights.SemiBold : FontWeights.Normal,
+            FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
             Foreground = Brushes.White,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -2007,29 +2237,49 @@ public partial class IslandWindow : Window
         Grid.SetColumn(name, 1);
         grid.Children.Add(name);
 
-        var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        if (n.Secured)
-            right.Children.Add(new System.Windows.Shapes.Path
+        var idle = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (locked)
+            idle.Children.Add(new System.Windows.Shapes.Path
             {
-                // padlock
                 Data = Geometry.Parse("M 3,6 V 4.5 A 3,3 0 0 1 9,4.5 V 6 M 1.5,6 H 10.5 A 1,1 0 0 1 11.5,7 V 12 A 1,1 0 0 1 10.5,13 H 1.5 A 1,1 0 0 1 0.5,12 V 7 A 1,1 0 0 1 1.5,6 Z"),
                 Stroke = (Brush)FindResource("SecondaryText"),
                 StrokeThickness = 1.2,
                 Width = 12,
                 Height = 14,
-                Margin = new Thickness(0, 0, 10, 0),
+                Margin = new Thickness(0, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             });
-        var action = new TextBlock
+        idle.Children.Add(new TextBlock { Text = idleText, FontSize = 11.5, Foreground = idleBrush, VerticalAlignment = VerticalAlignment.Center });
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+        foreach (var (label, run) in actions)
         {
-            FontSize = 11.5,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = n.Connected ? _uiBrush : (Brush)FindResource("SecondaryText"),
-            Text = n.Connected ? "Connected" : "",
-            MinWidth = 70,
-            TextAlignment = TextAlignment.Right,
-        };
-        right.Children.Add(action);
+            bool primary = label is "Join" or "Connect" or "Pair";
+            var button = new Border
+            {
+                Padding = new Thickness(10, 3, 10, 4),
+                Margin = new Thickness(6, 0, 0, 0),
+                CornerRadius = new CornerRadius(8),
+                Background = primary ? _uiBrush : Frozen(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)),
+                Cursor = Cursors.Hand,
+                Child = new TextBlock
+                {
+                    Text = label,
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = primary && AppSettings.Current.MatchWindowsColors ? Brushes.Black : Brushes.White,
+                },
+            };
+            button.MouseLeftButtonUp += async (_, e) =>
+            {
+                e.Handled = true;
+                buttons.IsEnabled = false;
+                buttons.Opacity = 0.5;
+                await run();
+            };
+            buttons.Children.Add(button);
+        }
+        var right = new Grid { Children = { idle, buttons } };
         Grid.SetColumn(right, 2);
         grid.Children.Add(right);
 
@@ -2038,38 +2288,10 @@ public partial class IslandWindow : Window
         var hovered = new Trigger { Property = IsMouseOverProperty, Value = true };
         hovered.Setters.Add(new Setter(Border.BackgroundProperty, Frozen(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF))));
         style.Triggers.Add(hovered);
-        var row = new Border { Style = style, CornerRadius = new CornerRadius(7), Padding = new Thickness(6, 0, 8, 0), Cursor = Cursors.Hand, Child = grid };
-        row.MouseEnter += (_, _) => action.Text = n.Connected ? "Disconnect" : "Join";
-        row.MouseLeave += (_, _) => action.Text = n.Connected ? "Connected" : "";
-        row.MouseLeftButtonUp += async (_, e) =>
-        {
-            e.Handled = true;
-            if (n.Connected)
-            {
-                WifiService.Disconnect();
-                WifiStatus.Text = $"Disconnected from {n.Ssid}";
-                await System.Threading.Tasks.Task.Delay(800);
-                await RefreshWifiAsync();
-                return;
-            }
-            action.Text = "Joining…";
-            var result = await WifiService.JoinAsync(n);
-            switch (result)
-            {
-                case WifiJoinResult.Joined:
-                    WifiStatus.Text = $"Connected to {n.Ssid}";
-                    await RefreshWifiAsync();
-                    break;
-                case WifiJoinResult.NeedsPassword:
-                    CloseAfterAction();
-                    WifiPasswordWindow.ShowFor(n, _monitor);
-                    break;
-                default:
-                    action.Text = "";
-                    WifiStatus.Text = $"Couldn't join {n.Ssid}";
-                    break;
-            }
-        };
+        var row = new Border { Style = style, CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 0, 6, 0), Child = grid };
+        row.MouseEnter += (_, _) => { idle.Visibility = Visibility.Collapsed; buttons.Visibility = Visibility.Visible; };
+        row.MouseLeave += (_, _) => { idle.Visibility = Visibility.Visible; buttons.Visibility = Visibility.Collapsed; };
+        row.MouseLeftButtonUp += (_, e) => e.Handled = true; // clicks inside the panel never close or open things
         return row;
     }
 
