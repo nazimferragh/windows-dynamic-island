@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -25,7 +26,7 @@ namespace DynamicIsland;
 /// </summary>
 public partial class IslandWindow : Window
 {
-    private enum State { Closed, Peek, Open, Attract }
+    private enum State { Closed, Peek, Open, Attract, Notify, DownloadStart }
 
     /// <summary>Body width/height, flare radius of the top corners, radius of the bottom corners.</summary>
     private readonly record struct Silhouette(double Width, double Height, double Flare, double Radius);
@@ -37,8 +38,10 @@ public partial class IslandWindow : Window
     private static readonly Silhouette ClosedVaultShape = new(250, 32, 6, 10);
     private static readonly Silhouette ClosedVaultHoverShape = new(264, 35, 6, 11);
     private static readonly Silhouette PeekShape = new(290, 58, 8, 18);
-    private static readonly Silhouette OpenShape = new(640, 186, 14, 32);
-    private static readonly Silhouette OpenShelfShape = new(640, 316, 14, 32);
+    private static readonly Silhouette NotifyShape = new(470, 84, 16, 26);
+    private static readonly Silhouette DownloadStartShape = new(210, 60, 10, 24);
+    private static readonly Silhouette OpenShape = new(640, 206, 14, 32);
+    private static readonly Silhouette OpenShelfShape = new(640, 336, 14, 32);
     private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
 
     // Where a dragged window is pulled in / captured, in DIPs relative to the notch's top-center.
@@ -46,7 +49,7 @@ public partial class IslandWindow : Window
     // busy (browser tab strips, drag-to-maximize), and a window must never be swallowed by accident.
     private const double AttractRadius = 320;
     private const double CaptureHalfWidth = 170;
-    private const double CaptureDepth = 64;
+    private const double CaptureDepth = 84;
     private static readonly TimeSpan ArmDelay = TimeSpan.FromMilliseconds(450);
 
     private static readonly Color HoleGlow = Color.FromRgb(150, 90, 255);
@@ -55,6 +58,8 @@ public partial class IslandWindow : Window
     private readonly WindowVault _vault;
     private readonly WindowDragWatcher _dragWatcher;
     private readonly DownloadWatcher _downloads;
+    private readonly NotificationService _notifications;
+    private readonly PinnedApps _pins;
     private readonly Int32Rect _monitor; // physical pixels
     private readonly MenuBarStrip _strip;
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
@@ -71,6 +76,9 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _openTimer = new() { Interval = TimeSpan.FromMilliseconds(220) };
     private readonly DispatcherTimer _closeTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private readonly DispatcherTimer _peekTimer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private readonly DispatcherTimer _notifyTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private readonly DispatcherTimer _burstTimer = new() { Interval = TimeSpan.FromMilliseconds(1900) };
+    private readonly HashSet<string> _seenDownloads = new();
     private readonly DispatcherTimer _tickTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly DispatcherTimer _watchdogTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
@@ -88,7 +96,8 @@ public partial class IslandWindow : Window
     private DateTime? _zoneEnteredAt;
     private bool _inZone;
     private bool _capture; // armed: releasing now absorbs the window
-    private (AbsorbedWindow Item, WindowApi.RECT Rect)? _armed;
+    // The window, its bounds and the cursor at the moment it was armed (to place it on release).
+    private (AbsorbedWindow Item, WindowApi.RECT Rect, int CursorX, int CursorY)? _armed;
     private bool _spinning;
 
     // Black hole: pulling a window back out of the shelf.
@@ -97,13 +106,16 @@ public partial class IslandWindow : Window
     private WindowApi.POINT _pressPoint;
     private DragGhost? _ghost;
 
-    public IslandWindow(MediaService media, WindowVault vault, WindowDragWatcher dragWatcher, DownloadWatcher downloads, Int32Rect monitorBounds)
+    public IslandWindow(MediaService media, WindowVault vault, WindowDragWatcher dragWatcher, DownloadWatcher downloads,
+        NotificationService notifications, PinnedApps pins, Int32Rect monitorBounds)
     {
         InitializeComponent();
+        _pins = pins;
         _media = media;
         _vault = vault;
         _dragWatcher = dragWatcher;
         _downloads = downloads;
+        _notifications = notifications;
         _monitor = monitorBounds;
 
         // The menu-bar strip goes up first so the island always stacks above it.
@@ -126,11 +138,26 @@ public partial class IslandWindow : Window
         OpenEq.BarBrush = _accentBrush;
 
         _openTimer.Tick += (_, _) => { _openTimer.Stop(); SetState(State.Open); };
-        _closeTimer.Tick += (_, _) => { _closeTimer.Stop(); SetState(State.Closed); };
+        _closeTimer.Tick += (_, _) =>
+        {
+            _closeTimer.Stop();
+            if (_appMenuOpen) return; // a pinned app's menu is up; stay open under it
+            SetState(State.Closed);
+        };
         _peekTimer.Tick += (_, _) =>
         {
             _peekTimer.Stop();
             if (_state == State.Peek) SetState(State.Closed);
+        };
+        _burstTimer.Tick += (_, _) =>
+        {
+            _burstTimer.Stop();
+            if (_state == State.DownloadStart) SetState(State.Closed);
+        };
+        _notifyTimer.Tick += (_, _) =>
+        {
+            _notifyTimer.Stop();
+            if (_state == State.Notify) SetState(State.Closed);
         };
         _tickTimer.Tick += (_, _) => OnTick();
         _watchdogTimer.Tick += (_, _) => Watchdog();
@@ -141,17 +168,22 @@ public partial class IslandWindow : Window
         _dragWatcher.Ended += OnWindowDragEnded;
         MediaBrowserWindow.NowPlayingChanged += OnBrowserThumbnailArrived;
         _downloads.Changed += OnDownloadsChanged;
+        _notifications.Received += OnNotificationReceived;
+        _pins.Changed += RebuildApps;
         Closed += (_, _) =>
         {
+            _pins.Changed -= RebuildApps;
             _media.Changed -= OnMediaChanged;
             _vault.Changed -= OnVaultChanged;
             _dragWatcher.Moved -= OnWindowDragMoved;
             _dragWatcher.Ended -= OnWindowDragEnded;
             MediaBrowserWindow.NowPlayingChanged -= OnBrowserThumbnailArrived;
             _downloads.Changed -= OnDownloadsChanged;
+            _notifications.Received -= OnNotificationReceived;
             _tickTimer.Stop();
             _watchdogTimer.Stop();
             _ghost?.Close();
+            ReleaseCursor();
             _strip.Close();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
@@ -164,6 +196,7 @@ public partial class IslandWindow : Window
         ShowSnapshot(media.Current);
         RebuildShelf();
         RebuildDownloads();
+        RebuildApps();
         UpdateCalendar();
         ApplyState(animate: false);
     }
@@ -195,7 +228,9 @@ public partial class IslandWindow : Window
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
-        PositionOnMonitor();
+        // Windows resizes the window for the new scale *after* this returns; centering now would use
+        // the old size and leave the island off-center on monitors with a different scale (e.g. 125%).
+        Dispatcher.BeginInvoke(PositionOnMonitor, DispatcherPriority.Loaded);
     }
 
     private double DpiScale => _hwnd == IntPtr.Zero ? 1 : VisualTreeHelper.GetDpi(this).DpiScaleX;
@@ -204,11 +239,31 @@ public partial class IslandWindow : Window
     private void PositionOnMonitor()
     {
         if (_hwnd == IntPtr.Zero) return;
+        var r = ExpectedBounds();
+        NativeMethods.PlaceTopmost(_hwnd, r.Left, r.Top, r.Width, r.Height);
+    }
+
+    /// <summary>Top middle of this monitor (below the menu-bar strip), physical pixels.</summary>
+    private WindowApi.RECT ExpectedBounds()
+    {
         var dpi = VisualTreeHelper.GetDpi(this);
         int w = (int)Math.Round(Width * dpi.DpiScaleX);
         int h = (int)Math.Round(Height * dpi.DpiScaleY);
         int x = _monitor.X + (_monitor.Width - w) / 2;
-        NativeMethods.PlaceTopmost(_hwnd, x, _strip.ReservedTop, w, h);
+        return new WindowApi.RECT { Left = x, Top = _strip.ReservedTop, Right = x + w, Bottom = _strip.ReservedTop + h };
+    }
+
+    /// <summary>Puts the island back in the top middle if anything (a DPI change, Explorer, another app) moved it.</summary>
+    private void KeepCentered()
+    {
+        if (_hwnd == IntPtr.Zero || !WindowApi.GetWindowRect(_hwnd, out var actual)) return;
+        var expected = ExpectedBounds();
+        if (Math.Abs(actual.Left - expected.Left) > 1 || Math.Abs(actual.Top - expected.Top) > 1 ||
+            Math.Abs(actual.Width - expected.Width) > 1 || Math.Abs(actual.Height - expected.Height) > 1)
+        {
+            Log.Info($"Island was off its spot ({actual.Left},{actual.Top} {actual.Width}x{actual.Height}); re-centering");
+            PositionOnMonitor();
+        }
     }
 
     private bool IsOnMyMonitor(int x, int y) =>
@@ -227,6 +282,7 @@ public partial class IslandWindow : Window
     {
         if (_state == state) return;
         _state = state;
+        if (state != State.Open) _appsView = false; // next time it opens on the player
         ApplyState(animate: true);
     }
 
@@ -248,6 +304,10 @@ public partial class IslandWindow : Window
                 return new Silhouette(250 + 150 * a, 36 + 26 * a, 7 + 4 * a, 12 + 10 * a);
             case State.Peek when hasMedia:
                 return PeekShape;
+            case State.Notify:
+                return NotifyShape;
+            case State.DownloadStart:
+                return DownloadStartShape;
         }
         // Closed priority: download > media > black hole > idle.
         if (dlActive) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
@@ -279,6 +339,9 @@ public partial class IslandWindow : Window
             RenderShape();
         }
 
+        Reveal(NotificationContent, _state == State.Notify, animate);
+        Reveal(DownloadBurstContent, _state == State.DownloadStart, animate);
+        SetBurstAnimating(_state == State.DownloadStart);
         bool dlActive = _downloads.HasActive;
         Reveal(ClosedDownload, closed && dlActive, animate);
         Reveal(ClosedMedia, closed && hasMedia && !dlActive, animate);
@@ -286,6 +349,9 @@ public partial class IslandWindow : Window
         Reveal(ClosedVault, closed && !hasMedia && !dlActive && _visibleItems.Count > 0, animate);
         Reveal(BlackHoleContent, _state == State.Attract, animate);
         Reveal(OpenContent, _state == State.Open, animate);
+        PlayerGrid.Visibility = _appsView ? Visibility.Collapsed : Visibility.Visible;
+        AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
+        AppsGlyphPath.Fill = _appsView ? Brushes.White : (Brush)FindResource("SecondaryText");
         DownloadsSection.Visibility = _state == State.Open && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ShelfSection.Visibility = _state == State.Open && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         SetDownloadArrowAnimating(closed && dlActive);
@@ -475,6 +541,10 @@ public partial class IslandWindow : Window
             return;
         }
 
+        // Keep the cursor off the top strip while the island pulls the window in: up there Windows
+        // would start its own drag-to-top maximize (the whole screen goes grey and blurry).
+        HoldCursorBelowStrip();
+
         // Only arm after the window has been held over the notch for a moment.
         _zoneEnteredAt = inZone ? _zoneEnteredAt ?? DateTime.UtcNow : null;
         bool armed = inZone && DateTime.UtcNow - _zoneEnteredAt >= ArmDelay;
@@ -484,7 +554,7 @@ public partial class IslandWindow : Window
             // Snapshot it now, while it still looks the way the user is holding it: on release
             // Windows may snap/maximize it (drag-to-top) before we get to hide it.
             var item = _vault.Prepare(drag.Hwnd, drag.StartPlacement);
-            _armed = item == null ? null : (item, WindowApi.GetVisibleBounds(drag.Hwnd));
+            _armed = item == null ? null : (item, WindowApi.GetVisibleBounds(drag.Hwnd), drag.CursorX, drag.CursorY);
         }
 
         _openTimer.Stop();
@@ -502,7 +572,16 @@ public partial class IslandWindow : Window
         var armed = _state == State.Attract && _capture ? _armed : null;
         ExitAttract();
         if (armed == null || !drag.IsMove || !IsInCaptureZone(drag.CursorX, drag.CursorY)) return;
-        Swallow(armed.Value.Item, armed.Value.Rect);
+        // The window kept following the cursor after it was armed; start the animation exactly where
+        // it was let go, not where it was a moment ago (Windows may already have snapped it, so its
+        // live bounds can't be trusted here).
+        var (item, rect, armX, armY) = armed.Value;
+        int dx = drag.CursorX - armX, dy = drag.CursorY - armY;
+        rect.Left += dx;
+        rect.Right += dx;
+        rect.Top += dy;
+        rect.Bottom += dy;
+        Swallow(item, rect);
     }
 
     private bool IsInCaptureZone(int x, int y)
@@ -517,11 +596,30 @@ public partial class IslandWindow : Window
         _zoneEnteredAt = null;
         _armed = null;
         if (_state != State.Attract) return;
+        ReleaseCursor();
         _inZone = false;
         _capture = false;
         _attraction = 0;
         _state = State.Closed;
         ApplyState(animate: true);
+    }
+
+    private bool _cursorHeld;
+
+    private void HoldCursorBelowStrip()
+    {
+        int top = _strip.ReservedBottom > _monitor.Y ? _strip.ReservedBottom : _monitor.Y + (int)Math.Round(40 * DpiScale);
+        // Windows 11 starts its maximize preview a little before the actual edge, hence the margin.
+        CursorFence.Raise(_monitor.X, _monitor.X + _monitor.Width, top + (int)Math.Round(28 * DpiScale));
+        _cursorHeld = true;
+    }
+
+    /// <summary>Frees the cursor again. Also safe to call when it isn't held.</summary>
+    public void ReleaseCursor()
+    {
+        if (!_cursorHeld) return;
+        _cursorHeld = false;
+        CursorFence.Lower();
     }
 
     /// <summary>Swallows a window into this island with the black hole animation.</summary>
@@ -539,19 +637,26 @@ public partial class IslandWindow : Window
     /// <summary>Hides the window right away and plays the swirl from where it was (physical rect).</summary>
     private void Swallow(AbsorbedWindow item, WindowApi.RECT rect)
     {
-        // Hide immediately: waiting would let Windows' own drag-to-top maximize flash on screen.
-        if (!_vault.Commit(item))
-        {
-            Wobble();
-            return;
-        }
-
         double s = DpiScale;
         var target = new Point(_monitor.X + _monitor.Width / 2.0, _strip.ReservedTop + 18 * s);
         var animation = new AbsorbAnimation(item.Snapshot, rect, target, s);
         animation.ContentRendered += (_, _) => animation.Play();
         animation.Finished += Gulp;
+        // The snapshot goes up first, then the real window is hidden beneath it in the same beat, so
+        // there's no blank frame in between (and no time for Windows' drag-to-top maximize to show).
         animation.Show();
+        // The island stays in front, so the window falls *into* it rather than over it.
+        WindowApi.RaiseTopmost(_hwnd);
+        if (!_vault.Commit(item))
+        {
+            animation.Close();
+            Wobble();
+            return;
+        }
+        // The island opens its mouth while the window falls in.
+        _width.Kick(220);
+        _height.Kick(90);
+        StartShapeAnimation();
     }
 
     /// <summary>The notch bounces a little when something falls in.</summary>
@@ -586,12 +691,120 @@ public partial class IslandWindow : Window
     private void OnDownloadsChanged()
     {
         RebuildDownloads();
+        bool started = false;
+        foreach (var item in _downloads.Items)
+            if (_seenDownloads.Add(item.Id) && !item.Complete) started = true;
+        if (started) ShowDownloadStarted();
         ApplyState(animate: IsLoaded);
     }
+
+    // ---------------------------------------------------------------- notifications
+
+    private NotificationInfo? _shownNotification;
+
+    private void OnNotificationReceived(NotificationInfo info)
+    {
+        // Don't interrupt while the user is actively using the island or absorbing a window.
+        if (!IsVisible || _state is State.Open or State.Attract) return;
+
+        _shownNotification = info;
+        NotifApp.Text = string.IsNullOrWhiteSpace(info.AppName) ? "Notification" : info.AppName;
+        NotifTitle.Text = info.Title;
+        NotifBody.Text = info.Body;
+        NotifBody.Visibility = string.IsNullOrWhiteSpace(info.Body) ? Visibility.Collapsed : Visibility.Visible;
+        if (info.Icon != null)
+        {
+            NotifIcon.Source = info.Icon;
+            NotifIcon.Visibility = Visibility.Visible;
+            NotifBell.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            NotifIcon.Source = null;
+            NotifIcon.Visibility = Visibility.Collapsed;
+            NotifBell.Visibility = Visibility.Visible;
+        }
+
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _peekTimer.Stop();
+        SetState(State.Notify);
+        // A fresh notification restarts the display timer.
+        _notifyTimer.Stop();
+        _notifyTimer.Interval = TimeSpan.FromSeconds(_hovered ? 60 : 5);
+        _notifyTimer.Start();
+    }
+
+    /// <summary>A new download: the island pops out and shows the drop animation for a moment.</summary>
+    private void ShowDownloadStarted()
+    {
+        // Leave it alone while it's in use, pulling a window in, or showing a notification.
+        if (!IsVisible || _state is State.Open or State.Attract or State.Notify) return;
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _peekTimer.Stop();
+        SetState(State.DownloadStart);
+        _width.Kick(420);
+        _height.Kick(220);
+        StartShapeAnimation();
+        _burstTimer.Stop();
+        _burstTimer.Start();
+    }
+
+    private bool _bursting;
+
+    /// <summary>Arrow drops into the tray (twice) while a ring ripples out, in step.</summary>
+    private void SetBurstAnimating(bool on)
+    {
+        if (_bursting == on) return;
+        _bursting = on;
+        if (!on)
+        {
+            BurstArrowT.BeginAnimation(TranslateTransform.YProperty, null);
+            BurstArrow.BeginAnimation(OpacityProperty, null);
+            BurstRing.BeginAnimation(OpacityProperty, null);
+            BurstRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            BurstRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            return;
+        }
+
+        var cycle = TimeSpan.FromMilliseconds(800);
+        var drop = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever, Duration = cycle };
+        drop.KeyFrames.Add(new DiscreteDoubleKeyFrame(-16, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        drop.KeyFrames.Add(new EasingDoubleKeyFrame(2, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(380)),
+            new BounceEase { Bounces = 1, Bounciness = 3, EasingMode = EasingMode.EaseOut }));
+        drop.KeyFrames.Add(new DiscreteDoubleKeyFrame(2, KeyTime.FromTimeSpan(cycle)));
+
+        var fadeIn = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever, Duration = cycle };
+        fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        fadeIn.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160))));
+        fadeIn.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(620))));
+        fadeIn.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(cycle)));
+
+        // The ripple goes out as the arrow lands.
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var grow = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever, Duration = cycle };
+        grow.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.7, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        grow.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.7, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(300))));
+        grow.KeyFrames.Add(new EasingDoubleKeyFrame(1.35, KeyTime.FromTimeSpan(cycle), ease));
+        var ripple = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever, Duration = cycle };
+        ripple.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        ripple.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.9, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(300))));
+        ripple.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(cycle), ease));
+
+        BurstArrowT.BeginAnimation(TranslateTransform.YProperty, drop);
+        BurstArrow.BeginAnimation(OpacityProperty, fadeIn);
+        BurstRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+        BurstRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+        BurstRing.BeginAnimation(OpacityProperty, ripple);
+    }
+
+    private void ClearDownloads_Click(object sender, RoutedEventArgs e) => _downloads.ClearFinished();
 
     private void RebuildDownloads()
     {
         var items = _downloads.Items;
+        ClearDownloadsButton.Visibility = _downloads.HasFinished ? Visibility.Visible : Visibility.Collapsed;
         int rows = Math.Min(items.Count, 4);
         _downloadsHeight = 28 + rows * 40 + 8;
 
@@ -613,11 +826,32 @@ public partial class IslandWindow : Window
     private FrameworkElement CreateDownloadRow(DownloadItem item)
     {
         var grid = new Grid { Height = 40, Margin = new Thickness(0, 4, 0, 0) };
+        // Click the row: open the file (or its folder while it's still downloading).
+        var row = new Border
+        {
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 0, 4, 0),
+            Margin = new Thickness(-8, 0, -4, 0),
+            Cursor = Cursors.Hand,
+            Child = grid,
+            ToolTip = item.Complete ? "Open" : "Show in folder",
+        };
+        var hover = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        row.MouseEnter += (_, _) => row.Background = hover;
+        row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+        row.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            if (item.Complete) OpenDownload(item);
+            else RevealDownload(item);
+        };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var top = new Grid();
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var name = new TextBlock
@@ -646,6 +880,28 @@ public partial class IslandWindow : Window
         if (item.Complete) info.Foreground = new SolidColorBrush(Color.FromRgb(48, 209, 88));
         Grid.SetColumn(info, 1);
         top.Children.Add(info);
+
+        // Folder button: show the file in Explorer, selected.
+        var folder = new Button
+        {
+            Style = (Style)FindResource("TransportButton"),
+            Width = 24,
+            Height = 24,
+            Margin = new Thickness(8, 0, 0, 0),
+            ToolTip = "Show in folder",
+            Content = new System.Windows.Shapes.Path
+            {
+                Data = (Geometry)FindResource("FolderGlyph"),
+                Stroke = (Brush)FindResource("SecondaryText"),
+                StrokeThickness = 1.3,
+                Width = 13,
+                Height = 11,
+                Stretch = Stretch.Uniform,
+            },
+        };
+        folder.Click += (_, _) => RevealDownload(item);
+        Grid.SetColumn(folder, 2);
+        top.Children.Add(folder);
         Grid.SetRow(top, 0);
         grid.Children.Add(top);
 
@@ -680,7 +936,61 @@ public partial class IslandWindow : Window
             track.Loaded += (_, _) => fill.Width = track.ActualWidth;
         }
 
-        return grid;
+        return row;
+    }
+
+    /// <summary>
+    /// Opens a finished download the way double-clicking it in Explorer would. Going through the
+    /// shell keeps Windows' own safety prompts for programs downloaded from the internet.
+    /// </summary>
+    private void OpenDownload(DownloadItem item)
+    {
+        if (!File.Exists(item.FilePath))
+        {
+            RevealDownload(item);
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(item.FilePath) { UseShellExecute = true })?.Dispose();
+            CloseAfterAction();
+        }
+        catch (Exception ex)
+        {
+            // No app for this file type (or the user cancelled the prompt): show it instead.
+            Log.Error($"Couldn't open {item.FilePath}", ex);
+            RevealDownload(item);
+        }
+    }
+
+    /// <summary>Opens the download's folder in Explorer with the file selected.</summary>
+    private void RevealDownload(DownloadItem item)
+    {
+        try
+        {
+            string path = item.FilePath;
+            if (File.Exists(path))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = false })?.Dispose();
+            else
+            {
+                var dir = Directory.Exists(Path.GetDirectoryName(path) ?? "") ? Path.GetDirectoryName(path)!
+                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = false })?.Dispose();
+            }
+            CloseAfterAction();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Couldn't show {item.FilePath} in its folder", ex);
+        }
+    }
+
+    private void CloseAfterAction()
+    {
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _hovered = false;
+        SetState(State.Closed);
     }
 
     private static void AnimateIndeterminate(Border fill, Grid track)
@@ -973,9 +1283,7 @@ public partial class IslandWindow : Window
 
         var position = s.EstimatePosition();
         double fraction = Math.Clamp(position.TotalSeconds / s.Duration.TotalSeconds, 0, 1);
-        double w = ProgressTrack.ActualWidth;
-        ProgressFill.Width = w * fraction;
-        ProgressThumb.Margin = new Thickness(w * fraction - 6, 0, 0, 0);
+        PlaceKnob(ProgressTrack, ProgressFill, ProgressThumb, fraction);
         ElapsedText.Text = FormatTime(position);
         RemainingText.Text = "-" + FormatTime(s.Duration - position);
     }
@@ -1067,6 +1375,7 @@ public partial class IslandWindow : Window
 
         // Other always-on-top windows can end up above us; quietly reclaim the top spot.
         if (IsVisible && _hwnd != IntPtr.Zero) NativeMethods.BringToTopmost(_hwnd);
+        if (IsVisible) KeepCentered();
     }
 
     private void UpdateVisibility()
@@ -1099,6 +1408,14 @@ public partial class IslandWindow : Window
         _closeTimer.Stop();
         _peekTimer.Stop();
         _hovered = true;
+        if (_state == State.Notify)
+        {
+            // Reading it: keep it up (no auto-open into the player), so it can be clicked.
+            _notifyTimer.Stop();
+            NotificationContent.Opacity = 1;
+            NotifHover.Opacity = 1;
+            return;
+        }
         if (_state != State.Open)
         {
             ApplyState(animate: true); // the small "you can open me" nudge
@@ -1111,6 +1428,14 @@ public partial class IslandWindow : Window
         if (_pressedItem != null || _state == State.Attract) return;
         _openTimer.Stop();
         _hovered = false;
+        NotifHover.Opacity = 0;
+        if (_state == State.Notify)
+        {
+            // Give it a couple more seconds after the pointer leaves.
+            _notifyTimer.Interval = TimeSpan.FromSeconds(2.5);
+            _notifyTimer.Start();
+            return;
+        }
         if (_state == State.Closed) ApplyState(animate: true);
         else _closeTimer.Start();
     }
@@ -1119,6 +1444,17 @@ public partial class IslandWindow : Window
     {
         if (_state is State.Open or State.Attract) return;
         _openTimer.Stop();
+        if (_state == State.Notify && _shownNotification is { } notification)
+        {
+            // Open what the notification is about, like clicking it in Windows.
+            _notifyTimer.Stop();
+            _shownNotification = null;
+            NotifHover.Opacity = 0;
+            _hovered = false;
+            SetState(State.Closed);
+            NotificationActivator.Activate(notification);
+            return;
+        }
         SetState(State.Open);
     }
 
@@ -1133,6 +1469,210 @@ public partial class IslandWindow : Window
     }
 
     private async void PlayPause_Click(object sender, RoutedEventArgs e) => await _media.TogglePlayPauseAsync();
+
+    // ---------------------------------------------------------------- pinned apps
+
+    private bool _appsView;
+    private bool _appMenuOpen;
+    private readonly Dictionary<string, System.Windows.Media.Imaging.BitmapSource?> _appIcons = new(StringComparer.OrdinalIgnoreCase);
+
+    private void AppsButton_Click(object sender, RoutedEventArgs e)
+    {
+        _appsView = !_appsView;
+        ApplyState(animate: true);
+    }
+
+    private void RebuildApps()
+    {
+        AppsPanel.Children.Clear();
+        foreach (var app in _pins.Apps) AppsPanel.Children.Add(CreateAppTile(app));
+        AppsPanel.Children.Add(CreateAddTile());
+        AppsHint.Visibility = _pins.Apps.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private FrameworkElement CreateAppTile(PinnedApp app)
+    {
+        if (!_appIcons.TryGetValue(app.ParsingName, out var icon))
+            _appIcons[app.ParsingName] = icon = ShellIcons.Get(app.ParsingName, 96);
+
+        var image = new Image { Source = icon, Width = 40, Height = 40 };
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
+        var tile = CreateTile(image, app.Name);
+        tile.ToolTip = app.Name;
+        tile.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            PinnedApps.Launch(app);
+            CloseAfterAction();
+        };
+
+        var menu = new ContextMenu();
+        var left = new MenuItem { Header = "Move left", IsEnabled = _pins.Apps.Count > 0 && _pins.Apps[0] != app };
+        left.Click += (_, _) => _pins.Move(app, -1);
+        var right = new MenuItem { Header = "Move right", IsEnabled = _pins.Apps.Count > 0 && _pins.Apps[^1] != app };
+        right.Click += (_, _) => _pins.Move(app, +1);
+        var unpin = new MenuItem { Header = "Unpin" };
+        unpin.Click += (_, _) => _pins.Unpin(app);
+        menu.Items.Add(left);
+        menu.Items.Add(right);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(unpin);
+        menu.Opened += (_, _) => _appMenuOpen = true;
+        menu.Closed += (_, _) =>
+        {
+            _appMenuOpen = false;
+            if (!Notch.IsMouseOver) _closeTimer.Start();
+        };
+        tile.ContextMenu = menu;
+        return tile;
+    }
+
+    private FrameworkElement CreateAddTile()
+    {
+        var plus = new System.Windows.Shapes.Path
+        {
+            Data = (Geometry)FindResource("PlusGlyph"),
+            Fill = (Brush)FindResource("SecondaryText"),
+            Width = 16,
+            Height = 16,
+            Stretch = Stretch.Uniform,
+        };
+        var tile = CreateTile(plus, "Add");
+        tile.ToolTip = "Pin an app";
+        tile.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            CloseAfterAction();
+            AppPickerWindow.ShowFor(_pins, _monitor);
+        };
+        return tile;
+    }
+
+    /// <summary>A dock-style tile: rounded icon well with the name underneath, grows a little on hover.</summary>
+    private Border CreateTile(UIElement content, string label)
+    {
+        var well = new Border
+        {
+            Width = 58,
+            Height = 58,
+            CornerRadius = new CornerRadius(15),
+            Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = content,
+        };
+        var name = new TextBlock
+        {
+            Text = label,
+            FontSize = 10.5,
+            Foreground = (Brush)FindResource("SecondaryText"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            MaxWidth = 80,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        var scale = new ScaleTransform(1, 1);
+        var tile = new Border
+        {
+            Width = 84,
+            Margin = new Thickness(2, 0, 2, 0),
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = scale,
+            Child = new StackPanel { Children = { well, name } },
+        };
+        var hover = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+        tile.MouseEnter += (_, _) =>
+        {
+            AnimateScale(scale, 1.07);
+            well.Background = hover;
+            name.Foreground = Brushes.White;
+        };
+        tile.MouseLeave += (_, _) =>
+        {
+            AnimateScale(scale, 1);
+            well.Background = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+            name.Foreground = (Brush)FindResource("SecondaryText");
+        };
+        return tile;
+    }
+
+    private void AppsScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        AppsScroll.ScrollToHorizontalOffset(AppsScroll.HorizontalOffset - e.Delta / 2.0);
+        e.Handled = true;
+    }
+
+    // Drag a shortcut, program or file onto the island to pin it.
+
+    private static bool HasFiles(DragEventArgs e) => e.Data.GetDataPresent(DataFormats.FileDrop);
+
+    private void Notch_DragEnter(object sender, DragEventArgs e)
+    {
+        if (!HasFiles(e)) return;
+        _closeTimer.Stop();
+        _appsView = true;
+        if (_state != State.Open) SetState(State.Open);
+        else ApplyState(animate: true);
+    }
+
+    private void Notch_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = HasFiles(e) ? DragDropEffects.Link : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Notch_DragLeave(object sender, DragEventArgs e)
+    {
+        if (!Notch.IsMouseOver) _closeTimer.Start();
+    }
+
+    private void Notch_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
+        foreach (var path in paths) _pins.PinPath(path);
+        e.Handled = true;
+    }
+
+    private void OpenArt_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (_snapshot != null)
+            OpenArtHover.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(150)));
+    }
+
+    private void OpenArt_MouseLeave(object sender, MouseEventArgs e) =>
+        OpenArtHover.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
+
+    /// <summary>
+    /// Opens the playing song in the island's player panel. If it's playing elsewhere (e.g. a
+    /// browser tab), that is paused and the panel picks up from the same moment, so the song
+    /// simply moves into the island instead of playing twice.
+    /// </summary>
+    private async void OpenArt_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        var s = _snapshot;
+        if (s == null) return;
+        OpenArtHover.BeginAnimation(OpacityProperty, null);
+        OpenArtHover.Opacity = 0;
+
+        // Collapse the notch so it doesn't sit over the panel.
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _hovered = false;
+        SetState(State.Closed);
+
+        if (MediaBrowserWindow.IsPlaying(s.Title))
+        {
+            MediaBrowserWindow.ShowVideo(_monitor, null, s.Title, TimeSpan.Zero);
+            return;
+        }
+        var position = s.EstimatePosition();
+        var videoId = await _media.FindVideoIdAsync(s.Title, s.Artist);
+        if (s.IsPlaying) await _media.PauseAsync();
+        MediaBrowserWindow.ShowVideo(_monitor, videoId, videoId != null ? s.Title : $"{s.Title} {s.Artist}", position);
+    }
     private async void Next_Click(object sender, RoutedEventArgs e) => await _media.NextAsync();
     private async void Previous_Click(object sender, RoutedEventArgs e) => await _media.PreviousAsync();
 
@@ -1166,8 +1706,7 @@ public partial class IslandWindow : Window
     {
         double w = Math.Max(1, ProgressTrack.ActualWidth);
         double fraction = Math.Clamp(x / w, 0, 1);
-        ProgressFill.Width = w * fraction;
-        ProgressThumb.Margin = new Thickness(w * fraction - 6, 0, 0, 0);
+        PlaceKnob(ProgressTrack, ProgressFill, ProgressThumb, fraction);
         var s = _snapshot;
         if (s != null && s.Duration > TimeSpan.Zero)
         {
@@ -1207,11 +1746,20 @@ public partial class IslandWindow : Window
         UpdateVolumeUi(level);
     }
 
-    private void UpdateVolumeUi(float level)
+    private void UpdateVolumeUi(float level) => PlaceKnob(VolumeTrack, VolumeFill, VolumeThumb, level);
+
+    /// <summary>
+    /// Puts a slider's knob at a fraction of its track. The knob's travel is kept inside the track
+    /// (centered on the left end at 0, on the right end at 1): pushed past the edge, the layout
+    /// squeezes it into a sliver, which is what showed at full volume.
+    /// </summary>
+    private static void PlaceKnob(FrameworkElement track, FrameworkElement fill, FrameworkElement knob, double fraction)
     {
-        double w = Math.Max(1, VolumeTrack.ActualWidth);
-        VolumeFill.Width = w * level;
-        VolumeThumb.Margin = new Thickness(w * level - 5, 0, 0, 0);
+        double w = Math.Max(1, track.ActualWidth);
+        double d = knob.Width;
+        double x = Math.Clamp(fraction, 0, 1) * Math.Max(0, w - d);
+        knob.Margin = new Thickness(x, 0, 0, 0);
+        fill.Width = x + d / 2;
     }
 
     // ---------------------------------------------------------------- helpers

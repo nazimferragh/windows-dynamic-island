@@ -1,27 +1,37 @@
 using System;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using DynamicIsland.Interop;
 
 namespace DynamicIsland.Overlays;
 
 /// <summary>
-/// A click-through overlay that sits exactly on top of a window's snapshot and then swirls it
-/// into the notch, like it's being pulled into a black hole. The real window is hidden underneath.
+/// A click-through overlay that sits exactly on top of a window's snapshot and then pulls it into
+/// the notch like gravity: a soft settle, then it accelerates in, narrowing into a stream as it
+/// nears the event horizon and dissolving as it crosses. Driven per frame (not storyboards) so the
+/// path, squeeze and fade stay in lockstep. The real window is hidden underneath.
 /// </summary>
 internal sealed class AbsorbAnimation : Window
 {
-    private static readonly TimeSpan Duration = TimeSpan.FromMilliseconds(460);
+    private static readonly TimeSpan Duration = TimeSpan.FromMilliseconds(560);
+
+    /// <summary>Snapshots are drawn downscaled: it looks identical in motion and keeps every frame cheap.</summary>
+    private const int MaxSnapshotSide = 1100;
 
     private readonly WindowApi.RECT _windowRect;
     private readonly WindowApi.RECT _bounds;
     private readonly Point _target;
     private readonly FrameworkElement _visual;
+    private readonly MatrixTransform _transform = new();
+    private readonly Stopwatch _clock = new();
     private IntPtr _hwnd;
+    private bool _playing;
+    private int _frames;
+    private double _lastMs, _worstGapMs;
 
     /// <param name="windowRect">Visible bounds of the window, physical pixels.</param>
     /// <param name="target">Point to swallow it into (the notch), physical pixels.</param>
@@ -49,9 +59,23 @@ internal sealed class AbsorbAnimation : Window
         Width = _bounds.Width / dpiScale;
         Height = _bounds.Height / dpiScale;
 
-        _visual = snapshot != null
-            ? new Image { Source = snapshot, Stretch = Stretch.Fill }
-            : new Border { Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)), CornerRadius = new CornerRadius(12) };
+        if (snapshot != null)
+        {
+            var image = new Image { Source = Downscale(snapshot), Stretch = Stretch.Fill };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.Linear);
+            _visual = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                ClipToBounds = true,
+                Child = image,
+            };
+        }
+        else
+        {
+            _visual = new Border { Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)), CornerRadius = new CornerRadius(12) };
+        }
+        _visual.RenderTransform = _transform;
+        _visual.CacheMode = new BitmapCache { RenderAtScale = 1 };
         Content = new Canvas { Children = { _visual } };
 
         SourceInitialized += (_, _) =>
@@ -60,6 +84,7 @@ internal sealed class AbsorbAnimation : Window
             WindowApi.MakeClickThrough(_hwnd);
             Layout();
         };
+        Closed += (_, _) => Stop();
     }
 
     public event Action? Finished;
@@ -83,29 +108,82 @@ internal sealed class AbsorbAnimation : Window
 
     public void Play()
     {
-        // Shrink toward the notch: the transform origin is the notch, expressed relative to the snapshot.
-        _visual.RenderTransformOrigin = new Point(
-            (_target.X - _windowRect.Left) / Math.Max(1, _windowRect.Width),
-            (_target.Y - _windowRect.Top) / Math.Max(1, _windowRect.Height));
-        var scale = new ScaleTransform(1, 1);
-        var rotate = new RotateTransform(0);
-        _visual.RenderTransform = new TransformGroup { Children = { scale, rotate } };
+        if (_playing) return;
+        _playing = true;
+        _clock.Restart();
+        CompositionTarget.Rendering += OnFrame;
+    }
 
-        // Accelerating ease: slow at first, then it gets sucked in.
-        var suck = new PowerEase { EasingMode = EasingMode.EaseIn, Power = 3 };
-        var shrinkX = new DoubleAnimation(1, 0.02, Duration) { EasingFunction = suck };
-        var shrinkY = new DoubleAnimation(1, 0.02, Duration) { EasingFunction = new PowerEase { EasingMode = EasingMode.EaseIn, Power = 2.4 } };
-        var spin = new DoubleAnimation(0, 14, Duration) { EasingFunction = suck };
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180)) { BeginTime = Duration - TimeSpan.FromMilliseconds(180) };
-        shrinkX.Completed += (_, _) =>
-        {
-            Finished?.Invoke();
-            Close();
-        };
+    private void Stop()
+    {
+        if (!_playing) return;
+        _playing = false;
+        CompositionTarget.Rendering -= OnFrame;
+    }
 
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, shrinkX);
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, shrinkY);
-        rotate.BeginAnimation(RotateTransform.AngleProperty, spin);
-        _visual.BeginAnimation(OpacityProperty, fade);
+    private void OnFrame(object? sender, EventArgs e)
+    {
+        double ms = _clock.Elapsed.TotalMilliseconds;
+        if (_frames++ > 0) _worstGapMs = Math.Max(_worstGapMs, ms - _lastMs);
+        _lastMs = ms;
+        double t = Math.Clamp(ms / Duration.TotalMilliseconds, 0, 1);
+        Apply(t);
+        if (t < 1) return;
+
+        Stop();
+        DynamicIsland.Services.Log.Info($"Absorb animation: {_frames} frames in {ms:0} ms, worst gap {_worstGapMs:0} ms");
+        Finished?.Invoke();
+        Close();
+    }
+
+    /// <summary>Places the snapshot for progress t (0..1).</summary>
+    private void Apply(double t)
+    {
+        double s = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        double w = _windowRect.Width / s, h = _windowRect.Height / s;
+
+        // Where the window's center travels to (in the snapshot's own coordinates).
+        double toX = (_target.X - _windowRect.Left) / s - w / 2;
+        double toY = (_target.Y - _windowRect.Top) / s - h / 2;
+
+        // Gravity: barely moves at first, then falls in faster and faster (a smooth ease-in with no
+        // corner at the end). The first ~12% is a gentle settle, a slight shrink that reads as
+        // "it's been caught".
+        double pull = Math.Pow(t, 2.6);
+        double settle = Math.Sin(Math.Min(t / 0.24, 1) * Math.PI) * 0.025;
+
+        // Overall size falls with the pull; closer to the hole, width narrows faster than height,
+        // so the window stretches into a stream as it goes in.
+        double size = 1 - 0.985 * Math.Pow(t, 1.7) - settle;
+        double sx = size * (1 - 0.45 * Math.Sin(Math.PI * Math.Min(1, t * 1.15)) * t);
+        double sy = size * (1 + 0.18 * Math.Sin(Math.PI * t));
+
+        // A slight curve on the way (falls in from the side instead of a flat straight line).
+        double curve = Math.Sin(Math.PI * pull) * Math.Min(Math.Abs(toX) * 0.08, 60) * -Math.Sign(toX);
+
+        double cx = w / 2 + toX * pull + curve;
+        double cy = h / 2 + toY * pull;
+
+        // Scale around the window's own center, then move that center along the path.
+        var m = Matrix.Identity;
+        m.Translate(-w / 2, -h / 2);
+        m.Scale(sx, sy);
+        m.Translate(cx, cy);
+        _transform.Matrix = m;
+
+        // Stay solid while it travels, dissolve as it crosses the event horizon.
+        double fade = Math.Clamp((t - 0.62) / 0.38, 0, 1);
+        _visual.Opacity = 1 - fade * fade * (3 - 2 * fade);
+    }
+
+    private static BitmapSource Downscale(BitmapSource source)
+    {
+        int longest = Math.Max(source.PixelWidth, source.PixelHeight);
+        if (longest <= MaxSnapshotSide) return source;
+        double k = (double)MaxSnapshotSide / longest;
+        var scaled = new TransformedBitmap(source, new ScaleTransform(k, k));
+        var frozen = new WriteableBitmap(scaled);
+        frozen.Freeze();
+        return frozen;
     }
 }

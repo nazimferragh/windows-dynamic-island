@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -61,6 +62,8 @@ public sealed class MediaService : IDisposable
     private Color _accent = ColorExtractor.DefaultAccent;
 
     private bool _publishedOnce;
+    /// <summary>Set when the player says its metadata (including artwork) changed, so art is re-read.</summary>
+    private bool _artDirty = true;
 
     /// <summary>Raised with the new snapshot and whether a different track just started.</summary>
     public event Action<MediaSnapshot?, bool>? Changed;
@@ -85,6 +88,7 @@ public sealed class MediaService : IDisposable
     public Task TogglePlayPauseAsync() => Run(s => s.TryTogglePlayPauseAsync());
     public Task NextAsync() => Run(s => s.TrySkipNextAsync());
     public Task PreviousAsync() => Run(s => s.TrySkipPreviousAsync());
+    public Task PauseAsync() => Run(s => s.TryPauseAsync());
 
     /// <summary>Jump to a fraction (0..1) of the current track.</summary>
     public Task SeekToFractionAsync(double fraction)
@@ -175,7 +179,11 @@ public sealed class MediaService : IDisposable
     }
 
     private void OnMediaPropertiesChanged(Session sender, MediaPropertiesChangedEventArgs args) =>
-        _dispatcher.InvokeAsync(() => _ = RefreshAsync());
+        _dispatcher.InvokeAsync(() =>
+        {
+            _artDirty = true;
+            _ = RefreshAsync();
+        });
 
     private void OnPlaybackInfoChanged(Session sender, PlaybackInfoChangedEventArgs args) =>
         _dispatcher.InvokeAsync(() => _ = RefreshAsync());
@@ -210,14 +218,26 @@ public sealed class MediaService : IDisposable
             if (props == null || string.IsNullOrWhiteSpace(props.Title)) return;
 
             string key = props.Title + "\u001f" + props.Artist;
-            if (key != _artKey || _art == null)
+            if (key != _artKey)
             {
-                // Artwork often arrives a moment after the title, so keep retrying while it's missing.
-                var loaded = await LoadThumbnailAsync(props.Thumbnail);
+                // A new song never inherits the previous song's art.
                 _artKey = key;
-                _art = loaded;
-                _accent = ColorExtractor.Extract(loaded);
+                _art = null;
+                _artDirty = true;
+            }
+            if (_artDirty || _art == null)
+            {
+                // Browsers publish the title first and the real artwork a moment later (often with
+                // their logo in between), so art is re-read on every metadata change, and retried
+                // while it's missing.
+                _artDirty = false;
+                var loaded = await LoadThumbnailAsync(props.Thumbnail);
                 if (version != _refreshVersion) return;
+                if (loaded != null || _art == null)
+                {
+                    _art = loaded;
+                    _accent = ColorExtractor.Extract(loaded);
+                }
             }
 
             var timeline = session.GetTimelineProperties();
@@ -226,10 +246,11 @@ public sealed class MediaService : IDisposable
 
             // Browser playback (YouTube etc.) often gives no real cover art. Look up the video's
             // thumbnail from its title, so the island shows it instead of a blank tile.
+            // Browsers also hand over tiny thumbnails, so look up a sharp one for those too.
             var art = _art;
-            if (art == null && IsBrowserApp(appId))
+            if (IsBrowserApp(appId) && (art == null || art.PixelWidth < 300))
             {
-                if (_titleThumb.TryGetValue(key, out var cached)) art = cached;
+                if (_titleThumb.TryGetValue(key, out var cached)) art = cached ?? art;
                 else { _titleThumb[key] = null; _ = FetchTitleThumbnailAsync(version, key, props.Title, artist); }
             }
 
@@ -270,6 +291,28 @@ public sealed class MediaService : IDisposable
 
     private static readonly HttpClient Http = CreateHttp();
     private readonly Dictionary<string, BitmapSource?> _titleThumb = new();
+    private readonly Dictionary<string, string?> _videoIds = new();
+
+    /// <summary>The YouTube video for a track (top search result for "title artist"), cached.</summary>
+    public async Task<string?> FindVideoIdAsync(string title, string artist)
+    {
+        string key = title + "\u001f" + artist;
+        if (_videoIds.TryGetValue(key, out var known) && known != null) return known;
+        try
+        {
+            var query = Uri.EscapeDataString($"{title} {artist}".Trim());
+            var html = await Http.GetStringAsync($"https://www.youtube.com/results?search_query={query}");
+            var match = System.Text.RegularExpressions.Regex.Match(html, "\"videoId\":\"([A-Za-z0-9_-]{11})\"");
+            var id = match.Success ? match.Groups[1].Value : null;
+            _videoIds[key] = id;
+            return id;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Video lookup failed", ex);
+            return null;
+        }
+    }
 
     private static HttpClient CreateHttp()
     {
@@ -288,6 +331,7 @@ public sealed class MediaService : IDisposable
             var html = await Http.GetStringAsync($"https://www.youtube.com/results?search_query={query}");
             var match = System.Text.RegularExpressions.Regex.Match(html, "\"videoId\":\"([A-Za-z0-9_-]{11})\"");
             Log.Info($"Title lookup '{title}' -> videoId {(match.Success ? match.Groups[1].Value : "none")}");
+            if (match.Success) _videoIds[key] = match.Groups[1].Value;
             BitmapSource? thumb = null;
             if (match.Success)
             {
@@ -304,6 +348,14 @@ public sealed class MediaService : IDisposable
                         bmp.EndInit();
                         bmp.Freeze();
                         thumb = bmp;
+                        // hqdefault is 4:3 with black bars baked in around the 16:9 picture; cut them off.
+                        if (name == "hqdefault" && bmp.PixelHeight * 4 == bmp.PixelWidth * 3)
+                        {
+                            int h = bmp.PixelWidth * 9 / 16;
+                            var cropped = new CroppedBitmap(bmp, new Int32Rect(0, (bmp.PixelHeight - h) / 2, bmp.PixelWidth, h));
+                            cropped.Freeze();
+                            thumb = cropped;
+                        }
                         break;
                     }
                     catch { }
@@ -339,12 +391,12 @@ public sealed class MediaService : IDisposable
             bitmap.EndInit();
             bitmap.Freeze();
 
-            // Browsers/apps that don't publish real artwork make Windows hand us their app icon
-            // (e.g. the Chrome logo). Real cover art is large; an icon is small. Drop the small ones
-            // so the island shows a clean placeholder instead of a browser logo.
-            if (Math.Min(bitmap.PixelWidth, bitmap.PixelHeight) < 128)
+            // Browsers/apps that don't publish real artwork make Windows hand us their app logo
+            // (e.g. the Chrome logo, which can be 256px and up). Never show a logo: the island
+            // shows the song's thumbnail or a clean placeholder instead.
+            if (LooksLikeAppIcon(bitmap))
             {
-                Log.Info($"Ignoring small artwork ({bitmap.PixelWidth}x{bitmap.PixelHeight}) - looks like an app icon");
+                Log.Info($"Ignoring artwork that looks like an app logo ({bitmap.PixelWidth}x{bitmap.PixelHeight})");
                 return null;
             }
             return bitmap;
@@ -354,6 +406,32 @@ public sealed class MediaService : IDisposable
             Log.Error("Failed to load artwork", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Logos are tiny or have transparent surroundings; cover art and video thumbnails are opaque
+    /// all the way to their edges.
+    /// </summary>
+    private static bool LooksLikeAppIcon(BitmapSource bitmap)
+    {
+        int w = bitmap.PixelWidth, h = bitmap.PixelHeight;
+        if (Math.Min(w, h) < 64) return true;
+
+        var bgra = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        int transparent = 0, samples = 0;
+        var pixel = new byte[4];
+        // Sample the border and just inside it (a round logo leaves its corners empty).
+        for (int i = 0; i <= 8; i++)
+        {
+            int x = (w - 1) * i / 8, y = (h - 1) * i / 8;
+            foreach (var (px, py) in new[] { (x, 0), (x, h - 1), (0, y), (w - 1, y), (x, h / 20), (w / 20, y) })
+            {
+                bgra.CopyPixels(new Int32Rect(px, py, 1, 1), pixel, 4, 0);
+                samples++;
+                if (pixel[3] < 200) transparent++;
+            }
+        }
+        return transparent * 5 >= samples; // a fifth of the border is see-through: it's a logo
     }
 
     private static string PrettifySource(string? appId)

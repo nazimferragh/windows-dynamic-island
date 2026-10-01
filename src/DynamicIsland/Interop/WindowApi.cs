@@ -242,6 +242,10 @@ public static class WindowApi
     public static void PlaceTopmost(IntPtr hwnd, int x, int y, int width, int height) =>
         SetWindowPos(hwnd, new IntPtr(-1), x, y, width, height, SWP_NOACTIVATE);
 
+    /// <summary>Puts a topmost window back on top of the other topmost windows, without moving it.</summary>
+    public static void RaiseTopmost(IntPtr hwnd) =>
+        SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, SWP_NOSIZE | 0x0002 /* NOMOVE */ | SWP_NOACTIVATE);
+
     public static void MoveTopmost(IntPtr hwnd, int x, int y) =>
         SetWindowPos(hwnd, new IntPtr(-1), x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 

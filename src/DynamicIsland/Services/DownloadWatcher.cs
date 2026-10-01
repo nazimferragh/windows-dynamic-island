@@ -14,6 +14,8 @@ public sealed class DownloadItem
     public long? Total { get; set; }
     public bool Complete { get; set; }
     public DateTime? CompletedAt { get; set; }
+    /// <summary>Where the file is on disk: the partial file while downloading, the real file once done.</summary>
+    public string FilePath { get; set; } = "";
 
     /// <summary>0..1 when the total is known, else null (indeterminate).</summary>
     public double? Fraction => Total is > 0 ? Math.Clamp((double)Received / Total.Value, 0, 1) : null;
@@ -31,7 +33,8 @@ public sealed class DownloadWatcher : IDisposable
     private static readonly string[] PartialExtensions =
         { ".crdownload", ".part", ".partial", ".download", ".opdownload" };
 
-    private static readonly TimeSpan KeepCompleted = TimeSpan.FromSeconds(5);
+    /// <summary>Finished downloads stay listed this long, so there's time to click them.</summary>
+    private static readonly TimeSpan KeepCompleted = TimeSpan.FromMinutes(3);
 
     public static DownloadWatcher? Instance { get; private set; }
 
@@ -71,10 +74,21 @@ public sealed class DownloadWatcher : IDisposable
 
     public bool HasActive => _items.Values.Any(i => !i.Complete);
 
+    public bool HasFinished => _items.Values.Any(i => i.Complete);
+
+    /// <summary>Removes finished downloads from the list (the files themselves are untouched).</summary>
+    public void ClearFinished()
+    {
+        var done = _items.Where(kv => kv.Value.Complete).Select(kv => kv.Key).ToList();
+        if (done.Count == 0) return;
+        foreach (var key in done) _items.Remove(key);
+        Changed?.Invoke();
+    }
+
     public event Action? Changed;
 
     /// <summary>Report an in-island (WebView2) download; total may be 0/unknown.</summary>
-    public void Report(string id, string name, long received, long total, bool complete)
+    public void Report(string id, string name, long received, long total, bool complete, string filePath = "")
     {
         _dispatcher.InvokeAsync(() =>
         {
@@ -84,6 +98,7 @@ public sealed class DownloadWatcher : IDisposable
                 _items[id] = item;
             }
             item.Name = name;
+            if (filePath.Length > 0) item.FilePath = filePath;
             item.Received = received;
             item.Total = total > 0 ? total : null;
             if (complete && !item.Complete) { item.Complete = true; item.CompletedAt = DateTime.Now; }
@@ -104,7 +119,7 @@ public sealed class DownloadWatcher : IDisposable
         {
             if (!_items.TryGetValue(path, out var item))
             {
-                item = new DownloadItem { Id = path, Name = DisplayName(path) };
+                item = new DownloadItem { Id = path, Name = DisplayName(path), FilePath = path };
                 _items[path] = item;
             }
             item.Received = SafeSize(path);
@@ -116,12 +131,24 @@ public sealed class DownloadWatcher : IDisposable
     {
         _dispatcher.InvokeAsync(() =>
         {
+            // Partial renamed to another partial (Chrome: "Unconfirmed 123.crdownload" → "song.mp3.crdownload"):
+            // still downloading, just under its real name now.
+            if (_items.TryGetValue(e.OldFullPath, out var renamed) && IsPartial(e.FullPath))
+            {
+                _items.Remove(e.OldFullPath);
+                renamed.Name = DisplayName(e.FullPath);
+                renamed.FilePath = e.FullPath;
+                _items[e.FullPath] = renamed;
+                Changed?.Invoke();
+                return;
+            }
             // Partial file renamed to its final name = finished.
             if (_items.TryGetValue(e.OldFullPath, out var item))
             {
                 item.Received = SafeSize(e.FullPath);
                 item.Total = item.Received;
                 item.Name = Path.GetFileName(e.FullPath);
+                item.FilePath = e.FullPath;
                 item.Complete = true;
                 item.CompletedAt = DateTime.Now;
                 _items.Remove(e.OldFullPath);
@@ -145,6 +172,8 @@ public sealed class DownloadWatcher : IDisposable
                 item.Complete = true;
                 item.CompletedAt = DateTime.Now;
                 item.Total ??= item.Received;
+                // "movie.mp4.crdownload" gone: the finished file is "movie.mp4" next to it.
+                item.FilePath = Path.Combine(Path.GetDirectoryName(path) ?? "", DisplayName(path));
                 Changed?.Invoke();
             }
         });
@@ -156,16 +185,18 @@ public sealed class DownloadWatcher : IDisposable
         foreach (var item in _items.Values)
         {
             if (item.Complete) continue;
-            if (File.Exists(item.Id)) // folder items are keyed by path
+            // Folder downloads: follow the partial file's size (it may have been renamed since it started).
+            if (item.FilePath.Length > 0 && File.Exists(item.FilePath))
             {
-                long size = SafeSize(item.Id);
+                long size = SafeSize(item.FilePath);
                 if (size != item.Received) { item.Received = size; changed = true; }
             }
         }
 
-        // Drop completed items after a short grace period.
-        var stale = _items.Values.Where(i => i.Complete && i.CompletedAt is { } t && DateTime.Now - t > KeepCompleted).ToList();
-        foreach (var i in stale) { _items.Remove(i.Id); changed = true; }
+        // Drop completed items after a grace period (by their current key, which a rename may have changed).
+        var stale = _items.Where(kv => kv.Value.Complete && kv.Value.CompletedAt is { } t && DateTime.Now - t > KeepCompleted)
+            .Select(kv => kv.Key).ToList();
+        foreach (var key in stale) { _items.Remove(key); changed = true; }
 
         if (changed) Changed?.Invoke();
     }

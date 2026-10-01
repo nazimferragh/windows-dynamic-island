@@ -71,6 +71,9 @@ internal sealed class MenuBarStrip : Window
     /// <summary>Top of the strip in physical pixels: the monitor top, or just below a top-docked taskbar.</summary>
     public int ReservedTop { get; private set; }
 
+    /// <summary>Bottom edge of the strip, physical pixels (where the usable screen starts).</summary>
+    public int ReservedBottom { get; private set; }
+
     private WindowApi.RECT MonitorRect => new()
     {
         Left = _monitor.X,
@@ -117,6 +120,7 @@ internal sealed class MenuBarStrip : Window
             ? _appBar.ReserveTop(MonitorRect, height)
             : new WindowApi.RECT { Left = _monitor.X, Top = _monitor.Y, Right = _monitor.X + _monitor.Width, Bottom = _monitor.Y + height };
         WindowApi.PlaceTopmost(_hwnd, rect.Left, rect.Top, rect.Width, rect.Height);
+        ReservedBottom = rect.Bottom;
         if (rect.Top != ReservedTop)
         {
             ReservedTop = rect.Top;

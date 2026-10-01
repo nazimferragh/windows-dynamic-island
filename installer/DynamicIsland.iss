@@ -2,7 +2,7 @@
 ; Built by build.ps1, which passes /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.3.0"
+  #define AppVersion "0.5.0"
 #endif
 
 #define AppName "Dynamic Island"
@@ -58,8 +58,9 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
-; Always starts with Windows, like a built-in component.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIsland"; ValueData: """{app}\{#AppExe}"""; Flags: uninsdeletevalue
+; Starting with Windows is handled by a Task Scheduler task the app registers (see the "Always
+; running" page below). Clean up the Run entry older versions used.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "DynamicIsland"; Flags: deletevalue uninsdeletevalue
 
 ; The app turns off Windows 11's drag-to-top snap layouts bar on first run (it sits right where the
 ; island is). Uninstalling removes the value, which restores Windows' default.
@@ -71,12 +72,23 @@ Root: HKCU; Subkey: "Software\DynamicIsland"; Flags: uninsdeletekey
 Filename: "{app}\{#AppExe}"; Flags: nowait skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden; RunOnceId: "StopDynamicIsland"
+; Ask the island (and its watchdog) to stop for good, remove the start-with-Windows task (asks for
+; admin rights if it was set up in high priority), then make sure nothing is left running.
+Filename: "{app}\{#AppExe}"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitDynamicIsland"
+Filename: "{app}\{#AppExe}"; Parameters: "--unregister-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterAutostart"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe} /im DynamicIslandGuard.exe"; Flags: runhidden; RunOnceId: "StopDynamicIsland"
+; Give Windows its notification pop-ups back (the island turned them off while it ran).
+Filename: "{app}\{#AppExe}"; Parameters: "--restore-banners"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreBanners"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\DynamicIsland"
+; The watchdog's exe, a hard link the app creates next to itself.
+Type: files; Name: "{app}\DynamicIslandGuard.exe"
 
 [Code]
+var
+  PriorityPage: TInputOptionWizardPage;
+
 procedure InitializeWizard;
 var
   Avatar: TBitmapImage;
@@ -120,13 +132,50 @@ begin
     'This will install Dynamic Island on your computer.' + #13#10#13#10 +
     'It sits at the top of your screen, shows what''s playing, holds windows in its black hole, and starts automatically with Windows.' + #13#10#13#10 +
     'Click Next to continue.';
+
+  // "Always running": like Wallpaper Engine's high-priority startup. High priority asks Windows for
+  // administrator permission once (Windows shows its own prompt when setup finishes).
+  PriorityPage := CreateInputOptionPage(wpWelcome,
+    'Keep Dynamic Island always running',
+    'Choose how Dynamic Island starts with Windows.',
+    'Dynamic Island is meant to feel like part of Windows. With either option it starts when you sign in, ' +
+    'and it comes back on its own if it crashes, freezes or is closed from Task Manager.' + #13#10#13#10 +
+    'High priority also starts it before your other apps, gives it extra CPU priority so it stays smooth, ' +
+    'and lets it work with apps running as administrator. Windows will ask for your permission once.',
+    True, False);
+  PriorityPage.Add('High priority (recommended)');
+  PriorityPage.Add('Normal: no administrator permission needed');
+  PriorityPage.Values[0] := True;
+end;
+
+// After the files are in place: set up start-with-Windows. The app registers the task itself; for
+// high priority it runs Task Scheduler with admin rights, which shows Windows' permission prompt.
+// If that's declined it falls back to normal on its own.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Mode: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  // Silent installs/updates keep whatever was chosen before ("auto"); the wizard asks.
+  Mode := 'auto';
+  if not WizardSilent then
+  begin
+    if PriorityPage.Values[0] then Mode := 'high' else Mode := 'normal';
+  end;
+  if ExpandConstant('{param:HIGHPRIORITY|0}') = '1' then Mode := 'high';
+  Exec(ExpandConstant('{app}\{#AppExe}'), '--register-autostart ' + Mode, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
-  // Upgrading while the island is running would fail to overwrite the exe.
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Upgrading while the island is running would fail to overwrite the exe. Ask it to stop first (the
+  // only way that works for a high-priority island, which this setup has no rights to end), then
+  // make sure.
+  if FileExists(ExpandConstant('{app}\{#AppExe}')) then
+    Exec(ExpandConstant('{app}\{#AppExe}'), '--quit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im {#AppExe} /im DynamicIslandGuard.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
 end;

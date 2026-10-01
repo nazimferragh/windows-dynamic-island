@@ -18,11 +18,13 @@ namespace DynamicIsland;
 public partial class App : Application
 {
     private const string MutexName = @"Local\DynamicIsland.SingleInstance";
-    private const string AfterCrashArg = "--after-crash";
+    private const string AfterCrashArg = Guardian.AfterCrashArg;
 
     private readonly List<IslandWindow> _islands = new();
     private readonly DateTime _startedAt = DateTime.Now;
     private readonly DispatcherTimer _displayChangeDebounce = new() { Interval = TimeSpan.FromMilliseconds(700) };
+    private readonly DispatcherTimer _watchdogCheck = new() { Interval = TimeSpan.FromSeconds(5) };
+    private readonly DispatcherTimer _quitRequestCheck = new() { Interval = TimeSpan.FromSeconds(1) };
 
     private Mutex? _mutex;
     private bool _ownsMutex;
@@ -36,6 +38,8 @@ public partial class App : Application
     private WindowVault? _vault;
     private WindowDragWatcher? _dragWatcher;
     private DownloadWatcher? _downloads;
+    private NotificationService? _notifications;
+    private PinnedApps? _pins;
     private HwndSource? _hotkeySink;
     private bool _hidden;
 
@@ -52,16 +56,80 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // After a crash the dying instance may still hold the mutex for a moment, so wait for it.
+        // Run by the uninstaller: give Windows its notification pop-ups back.
+        if (e.Args.Contains(NotificationBanners.RestoreArg))
+        {
+            NotificationBanners.RestoreAll();
+            Shutdown();
+            return;
+        }
+
+        // The companion process that brings the island back if it dies. It has no UI of its own.
+        if (e.Args.Contains(Guardian.WatchdogArg))
+        {
+            Guardian.RunWatchdog();
+            Shutdown();
+            return;
+        }
+
+        // Run by the installer: set up start-with-Windows ("high" asks Windows for admin rights once;
+        // if that's declined it falls back to a normal task, which still keeps the island running).
+        int register = Array.IndexOf(e.Args, AutoStartTask.RegisterArg);
+        if (register >= 0)
+        {
+            string mode = register + 1 < e.Args.Length ? e.Args[register + 1] : "auto";
+            if (mode == "auto")
+            {
+                // Silent installs/updates: keep what the user chose before, without any prompt.
+                if (AutoStartTask.Query() is not { High: true }) AutoStartTask.Register(high: false);
+            }
+            else
+            {
+                bool high = mode == "high";
+                if (!AutoStartTask.Register(high) && high) AutoStartTask.Register(high: false);
+            }
+            Shutdown();
+            return;
+        }
+        if (e.Args.Contains(AutoStartTask.UnregisterArg))
+        {
+            AutoStartTask.Unregister();
+            Shutdown();
+            return;
+        }
+
+        // Run by the installer/uninstaller: stop the running island (and keep it stopped) so its files can be replaced.
+        if (e.Args.Contains(Guardian.QuitArg))
+        {
+            Guardian.RequestQuit();
+            WaitForOtherInstancesToExit(TimeSpan.FromSeconds(10));
+            Shutdown();
+            return;
+        }
+
+        bool autostart = e.Args.Contains(AutoStartTask.AutostartArg);
         _afterCrash = e.Args.Contains(AfterCrashArg);
-        _mutex = new Mutex(false, MutexName);
+        if (autostart && AutoStartTask.QuitThisBoot())
+        {
+            // The every-minute check, but the user quit the island this session: respect that.
+            Shutdown();
+            return;
+        }
+        if (!autostart && !_afterCrash) AutoStartTask.ForgetQuit(); // opened by hand: it's wanted again
+
+        // After a crash the dying instance may still hold the mutex for a moment, so wait for it.
         try
         {
+            _mutex = new Mutex(false, MutexName);
             _ownsMutex = _mutex.WaitOne(_afterCrash ? TimeSpan.FromSeconds(10) : TimeSpan.Zero);
         }
         catch (AbandonedMutexException)
         {
             _ownsMutex = true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            _ownsMutex = false; // held by a high-priority (elevated) island: it's already running
         }
         if (!_ownsMutex)
         {
@@ -69,9 +137,39 @@ public partial class App : Application
             return;
         }
 
+        // Opened by hand (Start menu, installer) while high priority is set up: start through the
+        // task instead, so the island runs with the rights and priority the user granted.
+        if (!autostart && !AutoStartTask.IsElevated && HighPriorityChosen())
+        {
+            _mutex.ReleaseMutex();
+            _ownsMutex = false;
+            if (AutoStartTask.RunNow())
+            {
+                Shutdown();
+                return;
+            }
+            _ownsMutex = _mutex.WaitOne(TimeSpan.Zero); // task unavailable: just run normally
+        }
+        if (HighPriorityChosen())
+        {
+            try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { }
+        }
+
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnFatalException;
         Log.Info($"Starting Dynamic Island {VersionText}{(_afterCrash ? " (restarted after crash)" : "")}");
+        Guardian.OnIslandStarted();
+        _watchdogCheck.Tick += (_, _) => Guardian.EnsureWatchdog();
+        _watchdogCheck.Start();
+        // An installer asking the island to stop (it may lack the rights to end a high-priority one).
+        _quitRequestCheck.Tick += (_, _) =>
+        {
+            if (!Guardian.QuitRequested()) return;
+            Log.Info("Quit requested by the installer");
+            Guardian.SignalQuit();
+            Shutdown();
+        };
+        _quitRequestCheck.Start();
 
         // Any windows a previous run left hidden (crash, forced kill) come back first.
         WindowVault.RecoverOrphans();
@@ -80,12 +178,19 @@ public partial class App : Application
         _vault = new WindowVault();
         _dragWatcher = new WindowDragWatcher();
         _downloads = new DownloadWatcher();
-        SessionEnding += (_, _) => _vault.RestoreAll();
+        _notifications = new NotificationService();
+        _pins = new PinnedApps();
+        SessionEnding += (_, _) =>
+        {
+            Guardian.SignalQuit(); // signing out or shutting down isn't a crash
+            _vault.RestoreAll();
+        };
 
         _media = new MediaService();
         CreateIslands();
         CreateTrayIcon();
         RegisterAbsorbHotkey();
+        CursorFence.Start();
 
         _displayChangeDebounce.Tick += (_, _) =>
         {
@@ -95,10 +200,12 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         await _media.InitializeAsync();
+        await _notifications.InitializeAsync();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _watchdogCheck.Stop();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
@@ -115,6 +222,8 @@ public partial class App : Application
             _tray.Dispose();
         }
         _media?.Dispose();
+        // While the island isn't running, Windows shows its own notification pop-ups again.
+        if (_ownsMutex) NotificationBanners.RestoreAll();
         if (_ownsMutex) _mutex?.ReleaseMutex();
         _mutex?.Dispose();
         base.OnExit(e);
@@ -129,7 +238,7 @@ public partial class App : Application
         foreach (var screen in Forms.Screen.AllScreens)
         {
             var b = screen.Bounds;
-            var island = new IslandWindow(_media!, _vault!, _dragWatcher!, _downloads!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
+            var island = new IslandWindow(_media!, _vault!, _dragWatcher!, _downloads!, _notifications!, _pins!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
             if (!_hidden) island.Show();
             _islands.Add(island);
         }
@@ -196,6 +305,18 @@ public partial class App : Application
         };
         menu.Items.Add(logs);
 
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        var quit = new Forms.ToolStripMenuItem("Quit Dynamic Island");
+        quit.Click += (_, _) =>
+        {
+            // Tell the watchdog (and the every-minute task) this is on purpose; the island comes back
+            // at the next restart, or when it's opened again.
+            AutoStartTask.RememberQuit();
+            Guardian.SignalQuit();
+            Shutdown();
+        };
+        menu.Items.Add(quit);
+
         var iconStream = GetResourceStream(new Uri("pack://application:,,,/Assets/icon.ico")).Stream;
         _tray = new Forms.NotifyIcon
         {
@@ -208,6 +329,35 @@ public partial class App : Application
         {
             if (args.Button == Forms.MouseButtons.Left) hide.Checked = !hide.Checked;
         };
+    }
+
+    private static bool HighPriorityChosen()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\DynamicIsland");
+            return key?.GetValue("HighPriority") is int v && v == 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void WaitForOtherInstancesToExit(TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        using var self = Process.GetCurrentProcess();
+        while (DateTime.UtcNow < until)
+        {
+            var others = Process.GetProcessesByName(Guardian.IslandProcessName)
+                .Concat(Process.GetProcessesByName(Guardian.GuardProcessName))
+                .Where(p => p.Id != self.Id).ToList();
+            bool any = others.Count > 0;
+            foreach (var p in others) p.Dispose();
+            if (!any) return;
+            Thread.Sleep(200);
+        }
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -225,7 +375,11 @@ public partial class App : Application
         try
         {
             _vault?.RestoreAll();
-            foreach (var island in _islands) island.ReleaseReservedSpace();
+            foreach (var island in _islands)
+            {
+                island.ReleaseCursor();
+                island.ReleaseReservedSpace();
+            }
         }
         catch
         {

@@ -36,7 +36,12 @@ jobs:
           Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/NORESTART' -Wait
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\Dynamic Island\DynamicIsland.exe'
           if (-not (Test-Path $exe)) { throw "Not installed at $exe" }
-          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').DynamicIsland) { throw "Startup entry missing" }
+          # Start-with-Windows: a Task Scheduler task, or the Run key when Task Scheduler isn't usable.
+          schtasks /query /tn DynamicIsland | Out-Null
+          $task = $LASTEXITCODE -eq 0
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').DynamicIsland
+          if (-not $task -and -not $run) { throw "Start-with-Windows not set up (no task, no Run entry)" }
+          $global:LASTEXITCODE = 0
           Start-Process $exe
           Start-Sleep 25
 

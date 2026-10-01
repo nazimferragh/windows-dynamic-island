@@ -86,6 +86,42 @@ internal sealed class MediaBrowserWindow : Window
         _instance.ToggleFor(monitor);
     }
 
+    /// <summary>True when the panel itself is what's playing this title.</summary>
+    public static bool IsPlaying(string title) =>
+        _instance != null && !string.IsNullOrWhiteSpace(title) && TitlesMatch(_nowTitle, title);
+
+    /// <summary>
+    /// Opens the panel on a video (the song playing in the island), continuing from the given
+    /// position. If the panel is already on it, it's just brought up without restarting playback.
+    /// Without a video id it falls back to a search for the title.
+    /// </summary>
+    public static async void ShowVideo(Int32Rect monitor, string? videoId, string title, TimeSpan at)
+    {
+        _instance ??= new MediaBrowserWindow();
+        var panel = _instance;
+        bool alreadyThere = (videoId != null && videoId == panel._lastVideoId) || IsPlaying(title);
+        panel.ShowFor(monitor);
+        if (alreadyThere) return;
+
+        try
+        {
+            await panel.InitWebViewAsync();
+            if (!panel._ready)
+            {
+                if (panel._initFailed) OpenInBrowser(title);
+                return;
+            }
+            var url = videoId != null
+                ? $"https://www.youtube.com/watch?v={videoId}&t={(int)Math.Max(0, at.TotalSeconds)}s"
+                : "https://www.youtube.com/results?search_query=" + Uri.EscapeDataString(title);
+            panel._web.CoreWebView2.Navigate(url);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not open the song in the panel", ex);
+        }
+    }
+
     public static void ShutDown()
     {
         _instance?.Close();
@@ -297,7 +333,7 @@ internal sealed class MediaBrowserWindow : Window
                 var id = "wv:" + Guid.NewGuid().ToString("N");
                 var name = Path.GetFileName(op.ResultFilePath);
                 void Update(bool complete) =>
-                    DownloadWatcher.Instance?.Report(id, name, (long)op.BytesReceived, (long)(op.TotalBytesToReceive ?? 0), complete);
+                    DownloadWatcher.Instance?.Report(id, name, (long)op.BytesReceived, (long)(op.TotalBytesToReceive ?? 0), complete, op.ResultFilePath);
                 Update(false);
                 op.BytesReceivedChanged += (_, _) => Update(false);
                 op.StateChanged += (_, _) => Update(op.State == CoreWebView2DownloadState.Completed);
@@ -363,6 +399,14 @@ internal sealed class MediaBrowserWindow : Window
                 bmp.StreamSource = new MemoryStream(bytes);
                 bmp.EndInit();
                 bmp.Freeze();
+                // hqdefault is 4:3 with black bars baked in around the 16:9 picture; cut them off.
+                if (name == "hqdefault" && bmp.PixelHeight * 4 == bmp.PixelWidth * 3)
+                {
+                    int h = bmp.PixelWidth * 9 / 16;
+                    var cropped = new CroppedBitmap(bmp, new Int32Rect(0, (bmp.PixelHeight - h) / 2, bmp.PixelWidth, h));
+                    cropped.Freeze();
+                    return cropped;
+                }
                 return bmp;
             }
             catch
@@ -382,12 +426,24 @@ internal sealed class MediaBrowserWindow : Window
             Hide();
             return;
         }
+        ShowFor(monitor);
+        _search.Focus();
+    }
+
+    private void ShowFor(Int32Rect monitor)
+    {
         _monitor = monitor;
         Show();
         PositionUnderNotch();
         Activate();
-        _search.Focus();
         _ = InitWebViewAsync();
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        // Re-center once Windows has resized the panel for the new monitor's scale.
+        Dispatcher.BeginInvoke(PositionUnderNotch, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void PositionUnderNotch()
