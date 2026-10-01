@@ -13,9 +13,24 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-09-30 → 2026-10-01. Last shipped commit: `a66dba9` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `6e01e57` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **Hover to open** (owner's request, exact 1.9 s): resting on Wi‑Fi, Bluetooth, Settings or Apps
+  in the open island opens it; an accent bar fills under the icon meanwhile. Verified on screen
+  (Wi‑Fi and Apps opened by hover alone).
+- **Black hole in and out**: new absorb (caught → swirl → darken → dissolve, frame-clock timed) and
+  a new emerge animation (out of the notch, or the dragged card grows into the window; the real
+  window only appears when it lands; in-flight windows stay saved). Verified with a test window:
+  absorb 64 frames/640 ms, emerge 41 frames/564 ms, frame burst checked.
+- **Snap panel**: bigger tiles spread out from the hole, forgiving aim (column per tile, zone by
+  position + hysteresis), aimed tile grows and shows auto-fill zones, spring outline with the
+  layout's other zones, window glides into its zone. Panel/aim/outline verified by screenshot;
+  **the glide itself was not run** (dropping on a zone would auto-fill the owner's windows).
+- **Pinned apps rearrange like iOS** (hold or drag, others jiggle and slide). **Not click-tested**:
+  the elevated island blocks test clicks — the owner must try it.
+
+Earlier (2026-09-30 → 10-01, `a66dba9`):
 - **YouTube panel (Search & play): account + full navigation.** Navigation row (Back, Forward,
   Home, Subscriptions, You, History, Playlists) and an account button (left-click: sign in /
   account; right-click: Switch account, Sign out). Panel enlarged to 880×640. State: done,
@@ -36,6 +51,9 @@ owner's PC as the current 0.7.0 build).
 ## Next — waiting on the owner
 
 In order:
+0. **Try the new things from 6e01e57**: drag an app in the Apps view left/right (hold or just
+   drag); drop a window on a snap zone and watch it glide; absorb a window and click it on the
+   shelf to see it come back out. Say if 1.9 s hover feels too slow.
 1. **Try YouTube sign-in** in the Search & play panel (Sign in, top right). Report if Google says
    "this browser or app may not be secure".
 2. **Try the Wi‑Fi panel actions** (click the Wi‑Fi icon in the open island): Join, Disconnect,
@@ -91,6 +109,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 6e01e57 · Hover-to-open icons, new absorb + emerge animations, reworked snap panel with gliding windows, drag-to-rearrange apps · pushed, deployed
 - 2026-10-01 · a66dba9 · YouTube account button + full navigation row; calls & mic recordings live in the island (timer, level, mute, open app) · pushed, deployed
 - 2026-10-01 · 26831fe · Block and skip YouTube ads in the Search & play panel · pushed, deployed
 - 2026-10-01 · 6cb9445 · MacBook-style notch: top corners flare out of the screen edge · pushed, deployed
