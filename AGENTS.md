@@ -62,10 +62,16 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   Aiming is forgiving: the panel is split into one column per tile and the cursor's position inside
   it picks the zone (`AimSnap`, with hysteresis); the aimed tile grows and shows which zones
   auto-fill will use, and the dropped window glides into place (`WindowSnapper.Glide`).
-- **Hover to open**: resting on Wi‑Fi, Bluetooth, Settings or Apps in the open island for 1.9 s
-  opens it (a bar fills under the icon while waiting). Owner's request; keep the exact delay.
-- **Black hole motion**: `AbsorbAnimation` (caught → swirling fall → dark → dissolve) and
-  `EmergeAnimation` (out of the notch, or from the dragged card, onto the window's spot). The real
+- **Hover to open**: hovering Wi‑Fi, Bluetooth or Apps in the open island opens it at once (90 ms,
+  only to ignore the pointer passing through; Settings waits 450 ms since it leaves the island).
+  The owner wants it instant; don't add a visible countdown. A click right after a hover-open
+  doesn't toggle the view shut. Switching views slides the new one in.
+- **Black hole motion must look like a real black hole** (owner's request): `AbsorbAnimation`
+  catches the window into a tilted accretion disk (`Disk`) just under the island, it spirals round
+  faster each turn, is stretched into a streak (spaghettification), reddens and goes dark, and
+  winks out in the notch while a debris ring collapses with it. `EmergeAnimation` runs that
+  backwards (thrown out as a red streak, spiralling outward, then lands with a spring), or grows
+  the dragged card into the window. The real
   window is only shown when the snapshot lands (`WindowVault.BeginRestore`/`FinishRestore`; in-flight
   windows are still saved, so a crash mid-animation can't lose them).
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
@@ -88,7 +94,8 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 ## Testing helpers
 
 - `DynamicIsland.exe --panel wifi|bluetooth|apps|player|close|restore` asks the running island to open a
-  panel, or (`restore`) to bring the newest black-hole window back out. Works even when the island
+  panel, or (`restore`) to bring the newest black-hole window back out, or (`absorb:<hwnd>`) to
+  swallow a given window (use your own test window, never the owner's). Works even when the island
   runs elevated and test clicks can't reach it.
 - `DynamicIsland.exe --diag` logs what the Wi‑Fi and Bluetooth panels would list, then exits.
 - Opening the app again while it runs opens Settings.

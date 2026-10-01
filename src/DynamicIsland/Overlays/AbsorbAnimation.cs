@@ -35,6 +35,10 @@ internal abstract class FlightOverlay : Window
     protected readonly MatrixTransform Transform = new();
     /// <summary>A dark veil over the snapshot: light fading as it nears the event horizon.</summary>
     protected readonly Border Veil;
+    /// <summary>The veil's color (it shifts from red to black: redshift, then nothing).</summary>
+    protected readonly SolidColorBrush VeilBrush = new(Color.FromRgb(10, 6, 22));
+    /// <summary>The overlay's canvas, for extra drawings (the accretion disk) under the snapshot.</summary>
+    protected readonly Canvas Stage = new();
 
     protected FlightOverlay(string name, BitmapSource? snapshot, WindowApi.RECT home, WindowApi.RECT extent, double dpiScale, TimeSpan duration)
     {
@@ -62,7 +66,7 @@ internal abstract class FlightOverlay : Window
 
         Veil = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(10, 6, 22)),
+            Background = VeilBrush,
             Opacity = 0,
             IsHitTestVisible = false,
         };
@@ -85,7 +89,8 @@ internal abstract class FlightOverlay : Window
             RenderTransform = Transform,
             CacheMode = new BitmapCache { RenderAtScale = 1 },
         };
-        Content = new Canvas { Children = { Visual } };
+        Stage.Children.Add(Visual);
+        Content = Stage;
 
         SourceInitialized += (_, _) =>
         {
@@ -104,6 +109,9 @@ internal abstract class FlightOverlay : Window
     /// <summary>The snapshot's laid-out size, DIPs.</summary>
     protected double W => Home.Width / Scale;
     protected double H => Home.Height / Scale;
+
+    /// <summary>A physical screen point in the overlay canvas' coordinates (DIPs).</summary>
+    protected Point ToStage(double x, double y) => new((x - _bounds.Left) / Scale, (y - _bounds.Top) / Scale);
 
     /// <summary>A physical screen point in the snapshot's own coordinates (DIPs, relative to its top-left).</summary>
     protected Point Local(double x, double y) => new((x - Home.Left) / Scale, (y - Home.Top) / Scale);
@@ -208,75 +216,220 @@ internal abstract class FlightOverlay : Window
 }
 
 /// <summary>
-/// Pulls a window into the notch like gravity: it's caught (a tiny lift and squeeze away from the
-/// hole), then falls in faster and faster, swirling, stretching into a stream and darkening as the
-/// light can't get back out, and dissolves as it crosses the event horizon.
+/// The black hole's disk, seen almost edge-on: an orbit of radius r at angle θ around the hole is
+/// at (r·cos θ, Tilt·r·sin θ). Positive sin θ is the near side (lower on screen, bigger, lit),
+/// negative the far side (up behind the island, smaller, darker). Shared by eating and spitting.
 /// </summary>
-internal sealed class AbsorbAnimation : FlightOverlay
+internal static class Disk
 {
-    private readonly Point _target;
+    public const double Tilt = 0.42;
+    /// <summary>Turns around the hole on the way in (or out).</summary>
+    public const double Turns = 1.5;
 
-    /// <param name="windowRect">Visible bounds of the window, physical pixels.</param>
-    /// <param name="target">Point to swallow it into (the notch), physical pixels.</param>
-    /// <param name="dpiScale">Scale of the monitor it's on, used for the initial size.</param>
-    public AbsorbAnimation(BitmapSource? snapshot, WindowApi.RECT windowRect, Point target, double dpiScale)
-        : base("Absorb", snapshot, windowRect, PointRect(target), dpiScale, TimeSpan.FromMilliseconds(640))
+    /// <summary>Offset from the hole (DIPs) at spiral progress u (0 = outer edge, 1 = the horizon).</summary>
+    public static Vector At(double u, double radius, double theta0, int dir)
     {
-        _target = target;
+        double r = radius * Math.Pow(1 - u, 1.55);
+        // Kepler: the closer it gets, the faster it goes round.
+        double theta = theta0 + dir * 2 * Math.PI * Turns * Math.Pow(u, 1.7);
+        return new Vector(r * Math.Cos(theta), Tilt * r * Math.Sin(theta));
     }
 
-    protected override void Apply(double t)
+    /// <summary>
+    /// The disk turns just below the island (the hole is at the very top of the screen, so a disk
+    /// centred on it would be half off-screen); the final plunge rises up into the notch.
+    /// </summary>
+    public static Vector Drop(double u)
     {
-        double w = W, h = H;
-        var to = Local(_target.X, _target.Y);
-        double toX = to.X - w / 2, toY = to.Y - h / 2;
-        double side = toX == 0 ? 1 : Math.Sign(toX);
+        double k = Math.Clamp((u - 0.72) / 0.28, 0, 1);
+        return new Vector(0, 34 * (1 - k * k * (3 - 2 * k)));
+    }
 
-        // Caught: during the first beat it eases back a hair (away from the hole) and tightens,
-        // like something being grabbed, then gravity takes over with no corner in between.
-        double catchK = Math.Sin(Math.Min(t / 0.26, 1) * Math.PI);
-        double lift = catchK * 0.035;
-        double pull = Math.Pow(t, 2.5);
+    public static double Depth(double u, double theta0, int dir) =>
+        Math.Sin(theta0 + dir * 2 * Math.PI * Turns * Math.Pow(u, 1.7));
 
-        // Size falls with the pull; near the hole the width narrows faster than the height, so it
-        // stretches into a stream as it goes in.
-        double size = 1 - 0.988 * Math.Pow(t, 1.65) - catchK * 0.02;
-        double sx = size * (1 - 0.5 * Math.Pow(t, 1.4) * Math.Sin(Math.PI * Math.Min(1, t * 1.1)));
-        double sy = size * (1 + 0.22 * Math.Sin(Math.PI * t) * t);
+    /// <summary>
+    /// A tilt that follows the direction of travel, continuous all the way round (sin 2a is the
+    /// same for a and a + 180°, so it never flips at the sides of the orbit).
+    /// </summary>
+    public static double Tilt2D(double u, double radius, double theta0, int dir)
+    {
+        var a = At(Math.Min(1, u + 0.003), radius, theta0, dir) - At(u, radius, theta0, dir);
+        return 22 * Math.Sin(2 * Math.Atan2(a.Y, a.X));
+    }
 
-        // It swirls a little as it falls (towards the side it comes from), and curves rather than
-        // travelling a flat straight line.
-        double degrees = -side * 32 * Math.Pow(t, 2.2);
-        double curve = Math.Sin(Math.PI * pull) * Math.Min(Math.Abs(toX) * 0.09, 70) * -side;
+    /// <summary>The ring of debris: a hot, glowing ellipse around the hole (a sharp line over a soft haze).</summary>
+    public static Grid MakeRing()
+    {
+        var brush = new LinearGradientBrush { StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5) };
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(0xFF, 0xBF, 0x5A, 0xF2), 0));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(0xFF, 0xFF, 0xB0, 0x5A), 0.5));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(0xFF, 0x5E, 0x5C, 0xE6), 1));
+        brush.Freeze();
+        var haze = new System.Windows.Shapes.Ellipse
+        {
+            Stroke = brush,
+            Opacity = 0.45,
+            Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 14, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
+        };
+        var line = new System.Windows.Shapes.Ellipse
+        {
+            Stroke = brush,
+            Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 2, RenderingBias = System.Windows.Media.Effects.RenderingBias.Performance },
+        };
+        return new Grid { Opacity = 0, IsHitTestVisible = false, Children = { haze, line } };
+    }
 
-        double cx = w / 2 + toX * (pull - lift) + curve;
-        double cy = h / 2 + toY * (pull - lift);
-        Place(cx, cy, sx, sy, degrees);
+    public static void PlaceRing(Grid ring, Point center, double radius, double opacity)
+    {
+        double rx = Math.Max(2, radius), ry = Math.Max(2, Tilt * radius);
+        ring.Width = rx * 2;
+        ring.Height = ry * 2;
+        Canvas.SetLeft(ring, center.X - rx);
+        Canvas.SetTop(ring, center.Y - ry);
+        double k = Math.Min(1, radius / 300);
+        ((System.Windows.Shapes.Ellipse)ring.Children[0]).StrokeThickness = 6 + 12 * k;
+        ((System.Windows.Shapes.Ellipse)ring.Children[1]).StrokeThickness = 1.5 + 2.5 * k;
+        ring.Opacity = opacity;
+    }
 
-        // Darkens as it nears the horizon, then dissolves as it crosses.
-        Veil.Opacity = 0.82 * Smoothstep(0.3, 0.92, t);
-        Visual.Opacity = 1 - Smoothstep(0.66, 1, t);
+    /// <summary>
+    /// Where on the disk something at offset (dx, dy) from the hole joins it (DIPs): the matching
+    /// angle, kept on the near side, and the direction that swings it round the front first.
+    /// </summary>
+    public static (double Theta, int Dir, double Radius) Join(double dx, double dy)
+    {
+        double theta = Math.Atan2(Math.Max(dy, 0) / Tilt, dx);
+        theta = Math.Clamp(theta, 0.3, Math.PI - 0.3);
+        double radius = Math.Clamp(Math.Sqrt(dx * dx + Math.Pow(Math.Max(dy, 0) / Tilt, 2)), 330, 640);
+        return (theta, dx >= 0 ? 1 : -1, radius);
+    }
+
+    /// <summary>Screen area (physical pixels) the disk can reach around the hole.</summary>
+    public static WindowApi.RECT Extent(Point hole, double radiusPx, WindowApi.RECT window)
+    {
+        double half = Math.Max(window.Width, window.Height) * 0.3;
+        return new WindowApi.RECT
+        {
+            Left = (int)(hole.X - radiusPx - half),
+            Right = (int)(hole.X + radiusPx + half),
+            Top = (int)(hole.Y - Tilt * radiusPx - half),
+            Bottom = (int)(hole.Y + Tilt * radiusPx + half),
+        };
+    }
+
+
+    /// <summary>Red when it's being stretched and slowed (redshift), then black at the horizon.</summary>
+    public static Color Redshift(double k)
+    {
+        k = Math.Clamp(k, 0, 1);
+        return Color.FromRgb((byte)(150 - 140 * k), (byte)(28 - 22 * k), (byte)(12 + 6 * k));
     }
 }
 
 /// <summary>
-/// The reverse: a window comes back out of the island. It's spat out of the notch (or grows from
-/// the card the user dragged out), unswirling and brightening, and lands on its real spot with a
-/// soft spring. The overlay then holds for a moment over the real window (so there's never a blank
-/// frame while the app repaints) and fades away.
+/// How a black hole eats: the window is caught by the hole's pull, falls into its tilted disk and
+/// spirals around it, faster on every turn (passing behind the island on the far side), while
+/// the tide stretches it into a thin streak (spaghettification), its light reddens and dies, and
+/// it winks out at the event horizon. A ring of debris glows around the hole while it goes round.
+/// </summary>
+internal sealed class AbsorbAnimation : FlightOverlay
+{
+    private readonly Point _hole;
+    private readonly double _radius;
+    private readonly double _theta0;
+    private readonly int _dir;
+    private readonly Grid _ring = Disk.MakeRing();
+
+    /// <param name="windowRect">Visible bounds of the window, physical pixels.</param>
+    /// <param name="target">The hole (the notch), physical pixels.</param>
+    /// <param name="dpiScale">Scale of the monitor it's on.</param>
+    public AbsorbAnimation(BitmapSource? snapshot, WindowApi.RECT windowRect, Point target, double dpiScale)
+        : base("Absorb", snapshot, windowRect,
+            Disk.Extent(target, JoinOf(windowRect, target, dpiScale).Radius * dpiScale, windowRect),
+            dpiScale, TimeSpan.FromMilliseconds(1250))
+    {
+        _hole = target;
+        // It joins the disk where it is (on the near half) and swings round the front first.
+        (_theta0, _dir, _radius) = JoinOf(windowRect, target, dpiScale);
+        Stage.Children.Insert(0, _ring);
+    }
+
+    private static (double Theta, int Dir, double Radius) JoinOf(WindowApi.RECT window, Point hole, double dpiScale) =>
+        Disk.Join((window.Left + window.Width / 2.0 - hole.X) / dpiScale, (window.Top + window.Height / 2.0 - hole.Y) / dpiScale);
+
+    protected override void Apply(double t)
+    {
+        double w = W, h = H;
+        var hole = Local(_hole.X, _hole.Y);
+
+        // Caught: it lets go of where it was and is drawn into the disk.
+        double caught = Smoothstep(0.02, 0.32, t);
+        double u = Math.Clamp((t - 0.05) / 0.88, 0, 1);
+        var orbit = hole + Disk.Drop(u) + Disk.At(u, _radius, _theta0, _dir);
+        double depth = Disk.Depth(u, _theta0, _dir);
+        double cx = Lerp(w / 2, orbit.X, caught), cy = Lerp(h / 2, orbit.Y, caught);
+
+        // Size: far smaller once in orbit, bigger on the near side, smaller on the far side.
+        double orbitScale = 0.5 * Math.Pow(1 - u, 1.15) * (1 + 0.3 * depth);
+        double size = Lerp(1, orbitScale, caught);
+
+        // Spaghettification: stretched along the orbit, squeezed across it, worse the deeper it goes.
+        double tide = Math.Pow(u, 1.35);
+        double sx = size * (1 + 2.8 * tide);
+        double sy = size / (1 + 4.5 * tide);
+        double degrees = Disk.Tilt2D(u, _radius, _theta0, _dir) * caught;
+        Place(cx, cy, sx, sy, degrees);
+
+        // Its light reddens, then goes out; the far side is in shadow.
+        VeilBrush.Color = Disk.Redshift(Smoothstep(0.4, 0.97, t));
+        Veil.Opacity = Math.Clamp(0.85 * Smoothstep(0.2, 0.92, t) + 0.3 * Math.Max(0, -depth) * caught, 0, 0.95);
+        Visual.Opacity = 1 - Smoothstep(0.9, 1, t);
+
+        // The debris ring: brightest while it's going round, collapsing into the hole with it.
+        double ringR = _radius * Math.Pow(1 - u, 1.55) + 16;
+        Disk.PlaceRing(_ring, ToStage(_hole.X, _hole.Y) + Disk.Drop(u), ringR, 0.95 * Math.Sin(Math.PI * Smoothstep(0.04, 0.99, t)));
+    }
+}
+
+/// <summary>
+/// The reverse, how it's let back out: the window is thrown out of the hole as a red-hot streak,
+/// spiralling outward through the disk and slowing down, un-stretching and regaining its color,
+/// then it breaks away and lands on its spot with a soft spring. Or, when the user dragged it out,
+/// the card they're holding grows into the window. The overlay then holds over the real window
+/// (so there's never a blank frame while the app repaints) and fades away.
 /// </summary>
 internal sealed class EmergeAnimation : FlightOverlay
 {
     private readonly WindowApi.RECT _from;
     private readonly bool _fromNotch;
+    private readonly double _radius;
+    private readonly double _theta0;
+    private readonly int _dir;
+    private readonly Grid? _ring;
 
     /// <param name="from">Where it starts: the notch (a point-sized rect) or the dragged card, physical pixels.</param>
     /// <param name="to">The window's final visible bounds, physical pixels.</param>
     public EmergeAnimation(BitmapSource? snapshot, WindowApi.RECT from, WindowApi.RECT to, bool fromNotch, double dpiScale)
-        : base("Emerge", snapshot, to, from, dpiScale, TimeSpan.FromMilliseconds(fromNotch ? 560 : 380))
+        : base("Emerge", snapshot, to,
+            fromNotch ? Disk.Extent(new Point(from.Left, from.Top), JoinOf(to, from, dpiScale).Radius * dpiScale, to) : from,
+            dpiScale, TimeSpan.FromMilliseconds(fromNotch ? 1000 : 380))
     {
         _from = from;
         _fromNotch = fromNotch;
+        // Spiralling out backwards along the disk, so it leaves on the side where it's going.
+        (_theta0, _dir, _radius) = JoinOf(to, from, dpiScale);
+        if (fromNotch)
+        {
+            _ring = Disk.MakeRing();
+            Stage.Children.Insert(0, _ring);
+        }
+    }
+
+    private static (double Theta, int Dir, double Radius) JoinOf(WindowApi.RECT window, WindowApi.RECT hole, double dpiScale)
+    {
+        var j = Disk.Join((window.Left + window.Width / 2.0 - hole.Left) / dpiScale, (window.Top + window.Height / 2.0 - hole.Top) / dpiScale);
+        return (j.Theta, j.Dir, j.Radius * 0.85);
     }
 
     /// <summary>A lightly underdamped spring from 0 to 1: fast out, a whisper of overshoot, settled at t = 1.</summary>
@@ -291,25 +444,38 @@ internal sealed class EmergeAnimation : FlightOverlay
     protected override void Apply(double t)
     {
         double w = W, h = H;
-        var start = Local(_from.Left + _from.Width / 2.0, _from.Top + _from.Height / 2.0);
         double s = Scale;
 
         if (_fromNotch)
         {
-            // Position glides out fast and settles; size springs open a touch past full and back.
-            double move = 1 - Math.Pow(1 - t, 3.2);
-            double grow = Spring(t, 7.5, 13);
-            double stream = 1 - Smoothstep(0, 0.55, t); // starts as a narrow stream, opens up
-            double sx = Math.Max(0.02, grow) * (1 - 0.45 * stream);
-            double sy = Math.Max(0.02, grow) * (1 + 0.25 * stream);
-            double degrees = 28 * Math.Pow(1 - Smoothstep(0, 0.75, t), 1.6) * (start.X < w / 2 ? 1 : -1);
-            Place(Lerp(start.X, w / 2, move), Lerp(start.Y, h / 2, move), sx, sy, degrees);
-            Veil.Opacity = 0.8 * (1 - Smoothstep(0.05, 0.55, t));
-            Visual.Opacity = Smoothstep(0, 0.22, t);
+            var hole = Local(_from.Left, _from.Top);
+            // Out through the disk: the spiral runs backwards (horizon → outer edge), slowing down.
+            double u = 1 - Smoothstep(0, 0.62, t);
+            var orbit = hole + Disk.Drop(u) + Disk.At(u, _radius, _theta0, _dir);
+            double depth = Disk.Depth(u, _theta0, _dir);
+            // Then it breaks away and lands, with a little spring.
+            double land = Spring(Math.Clamp((t - 0.32) / 0.68, 0, 1), 7, 12);
+            double cx = Lerp(orbit.X, w / 2, land), cy = Lerp(orbit.Y, h / 2, land);
+
+            double orbitScale = 0.5 * Math.Pow(1 - u, 1.15) * (1 + 0.3 * depth);
+            double size = Lerp(orbitScale, 1, land);
+            double tide = Math.Pow(u, 1.35) * (1 - land);
+            double sx = size * (1 + 2.8 * tide);
+            double sy = size / (1 + 4.5 * tide);
+            double degrees = Disk.Tilt2D(Math.Max(0, u - 0.003), _radius, _theta0, _dir) * (1 - land);
+            Place(cx, cy, Math.Max(0.004, sx), Math.Max(0.004, sy), degrees);
+
+            VeilBrush.Color = Disk.Redshift(1 - Smoothstep(0, 0.55, t));
+            Veil.Opacity = Math.Clamp(0.9 * (1 - Smoothstep(0.15, 0.7, t)) + 0.25 * Math.Max(0, -depth) * (1 - land), 0, 0.95);
+            Visual.Opacity = Smoothstep(0, 0.07, t);
+
+            double ringR = _radius * Math.Pow(1 - u, 1.55) + 16;
+            if (_ring != null) Disk.PlaceRing(_ring, ToStage(_from.Left, _from.Top) + Disk.Drop(u), ringR, 0.9 * Math.Sin(Math.PI * Smoothstep(0, 0.7, t)));
         }
         else
         {
             // From the dragged card: it expands from the card into the full window.
+            var start = Local(_from.Left + _from.Width / 2.0, _from.Top + _from.Height / 2.0);
             double fromW = _from.Width / s, fromH = _from.Height / s;
             double k = Spring(t, 9, 14);
             double sx = Lerp(fromW / Math.Max(1, w), 1, k);
@@ -322,6 +488,7 @@ internal sealed class EmergeAnimation : FlightOverlay
 
     protected override void OnLanded()
     {
+        if (_ring != null) _ring.Opacity = 0;
         // The real window has just been shown underneath; give it a beat to paint, then fade away.
         var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(170))
         {

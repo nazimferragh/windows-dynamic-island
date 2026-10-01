@@ -16,7 +16,7 @@ public sealed class AppSettings
 
     // General
     public bool ShowOnAllMonitors { get; set; } = true;
-    public int HoverDelayMs { get; set; } = 220;
+    public int HoverDelayMs { get; set; } = 120;
     public bool HideOverFullscreen { get; set; } = true;
     public bool MatchWindowsColors { get; set; } = true;
 

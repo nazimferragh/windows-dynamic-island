@@ -454,6 +454,10 @@ public partial class IslandWindow : Window
             DropHoleHalo.BeginAnimation(OpacityProperty, new DoubleAnimation(halo, TimeSpan.FromMilliseconds(_capture ? 120 : 220)));
         }
         Reveal(OpenContent, _state == State.Open, animate);
+        string view = _appsView ? "apps" : _wifiView ? "wifi" : _btView ? "bluetooth" : "player";
+        if (_state == State.Open && animate && view != _shownView && _shownView != null)
+            SlideIn(view == "apps" ? AppsGrid : view == "player" ? PlayerGrid : WifiGrid);
+        _shownView = _state == State.Open ? view : null;
         PlayerGrid.Visibility = _appsView || ListPanelShown ? Visibility.Collapsed : Visibility.Visible;
         AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
         WifiGrid.Visibility = ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
@@ -481,6 +485,20 @@ public partial class IslandWindow : Window
         }
     }
 
+    /// <summary>The view showing in the open island (player, apps, wifi, bluetooth); null while closed.</summary>
+    private string? _shownView;
+
+    /// <summary>Switching views: the new one rises a few pixels and fades in while the island resizes around it.</summary>
+    private static void SlideIn(FrameworkElement view)
+    {
+        var move = view.RenderTransform as TranslateTransform;
+        if (move == null) view.RenderTransform = move = new TranslateTransform();
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = TimeSpan.FromMilliseconds(260);
+        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, duration) { EasingFunction = ease });
+        view.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
+    }
+
     /// <summary>Content trails the shape slightly and fades in from a soft blur, the way macOS does it.</summary>
     private static void Reveal(FrameworkElement element, bool visible, bool animate)
     {
@@ -505,17 +523,26 @@ public partial class IslandWindow : Window
             return;
         }
 
-        var duration = TimeSpan.FromMilliseconds(visible ? 320 : 140);
-        var begin = TimeSpan.FromMilliseconds(visible ? 80 : 0);
+        // The open view is big: blurring it every frame costs smoothness, so it only fades and scales.
+        bool big = element.ActualWidth * element.ActualHeight > 150_000;
+        var duration = TimeSpan.FromMilliseconds(visible ? (big ? 260 : 320) : 140);
+        var begin = TimeSpan.FromMilliseconds(visible ? (big ? 30 : 80) : 0);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
 
         var opacityAnimation = new DoubleAnimation(opacity, duration) { BeginTime = begin, EasingFunction = ease };
         opacityAnimation.Completed += (_, _) => element.Effect = null;
         element.BeginAnimation(OpacityProperty, opacityAnimation);
 
-        var blur = new BlurEffect { Radius = visible ? 10 : 0, RenderingBias = RenderingBias.Performance };
-        element.Effect = blur;
-        blur.BeginAnimation(BlurEffect.RadiusProperty, new DoubleAnimation(visible ? 0 : 10, duration) { BeginTime = begin, EasingFunction = ease });
+        if (big)
+        {
+            element.Effect = null;
+        }
+        else
+        {
+            var blur = new BlurEffect { Radius = visible ? 10 : 0, RenderingBias = RenderingBias.Performance };
+            element.Effect = blur;
+            blur.BeginAnimation(BlurEffect.RadiusProperty, new DoubleAnimation(visible ? 0 : 10, duration) { BeginTime = begin, EasingFunction = ease });
+        }
 
         if (scaleTransform != null)
         {
@@ -1148,9 +1175,10 @@ public partial class IslandWindow : Window
             Wobble();
             return;
         }
-        // The island opens its mouth while the window falls in.
+        // The island opens its mouth and glows while the window goes round and falls in.
         _width.Kick(220);
         _height.Kick(90);
+        _glowPulse = 0.8;
         StartShapeAnimation();
     }
 
@@ -2040,6 +2068,7 @@ public partial class IslandWindow : Window
 
     private void AppsButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_appsView && JustHoverOpened) return; // hovering already opened it
         bool show = !_appsView;
         ClosePanels();
         _appsView = show;
@@ -2056,91 +2085,53 @@ public partial class IslandWindow : Window
 
     // ---------------------------------------------------------------- hover to open
 
-    /// <summary>Resting the pointer on an icon in the open island this long opens it, no click needed.</summary>
-    private static readonly TimeSpan DwellTime = TimeSpan.FromMilliseconds(1900);
-    private readonly DispatcherTimer _dwellTimer = new() { Interval = DwellTime };
-    private Border? _dwellBar;
-    private Action? _dwellAction;
-
-    /// <summary>A thin bar under an icon that fills up while the pointer rests on it.</summary>
-    private Border MakeDwellBar() => new()
-    {
-        Height = 2,
-        CornerRadius = new CornerRadius(1),
-        Background = _uiBrush,
-        VerticalAlignment = VerticalAlignment.Bottom,
-        Margin = new Thickness(2, 0, 2, 1),
-        Opacity = 0,
-        IsHitTestVisible = false,
-        RenderTransformOrigin = new Point(0.5, 0.5),
-        RenderTransform = new ScaleTransform(0, 1),
-    };
-
-    /// <summary>Gives a header button hover-to-open: its glyph gets a fill bar underneath.</summary>
-    private void AddDwell(Button button, Action open, Func<bool> isOpen)
-    {
-        if (button.Content is not FrameworkElement glyph) return;
-        button.Content = null;
-        glyph.HorizontalAlignment = HorizontalAlignment.Center;
-        glyph.VerticalAlignment = VerticalAlignment.Center;
-        var bar = MakeDwellBar();
-        bar.Margin = new Thickness(0);
-        button.Content = new Grid { Width = 20, Height = 24, Children = { glyph, bar } };
-        AttachDwell(button, bar, open, isOpen);
-    }
-
     /// <summary>
-    /// Resting on the icon starts filling its bar; when it's full (<see cref="DwellTime"/>) the icon
-    /// opens as if clicked. Leaving or clicking cancels.
+    /// Hovering an icon in the open island opens it, no click needed. The tiny delay only filters
+    /// out the pointer passing over on its way somewhere else; it reads as instant.
     /// </summary>
-    private void AttachDwell(UIElement host, Border bar, Action open, Func<bool> isOpen)
-    {
-        host.MouseEnter += (_, _) => StartDwell(bar, open, isOpen);
-        host.MouseLeave += (_, _) => CancelDwell(bar);
-        host.PreviewMouseLeftButtonDown += (_, _) => CancelDwell(bar);
-    }
+    private static readonly TimeSpan HoverOpenDelay = TimeSpan.FromMilliseconds(90);
+    /// <summary>Settings opens a window and closes the island, so it waits a little longer.</summary>
+    private static readonly TimeSpan HoverOpenSettingsDelay = TimeSpan.FromMilliseconds(450);
+    private readonly DispatcherTimer _dwellTimer = new();
+    private UIElement? _dwellHost;
+    private Action? _dwellAction;
+    /// <summary>When a view was last opened by hovering (a click right after must not close it again).</summary>
+    private DateTime _hoverOpenedAt;
 
-    private void StartDwell(Border bar, Action open, Func<bool> isOpen)
-    {
-        if (_dwellBar != null) CancelDwell(_dwellBar);
-        if (_state != State.Open || _appDrag != null || isOpen()) return;
-        _dwellBar = bar;
-        _dwellAction = open;
-        // Linear on purpose: it's an honest countdown. It only shows after a short beat, so just
-        // passing over the icons doesn't flash bars.
-        ((ScaleTransform)bar.RenderTransform).BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0, 1, DwellTime));
-        bar.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { BeginTime = TimeSpan.FromMilliseconds(220) });
-        _dwellTimer.Stop();
-        _dwellTimer.Start();
-    }
+    private bool JustHoverOpened => DateTime.UtcNow - _hoverOpenedAt < TimeSpan.FromMilliseconds(900);
 
-    private void CancelDwell(Border bar)
+    private void AddDwell(Button button, Action open, Func<bool> isOpen) =>
+        AttachDwell(button, open, isOpen, button == GearButton ? HoverOpenSettingsDelay : HoverOpenDelay);
+
+    private void AttachDwell(UIElement host, Action open, Func<bool> isOpen, TimeSpan delay)
     {
-        if (ReferenceEquals(bar, _dwellBar))
+        host.MouseEnter += (_, _) =>
         {
-            _dwellTimer.Stop();
-            _dwellBar = null;
-            _dwellAction = null;
-        }
-        bar.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(140)));
+            CancelDwell();
+            if (_state != State.Open || _appDrag != null || isOpen()) return;
+            _dwellHost = host;
+            _dwellAction = open;
+            _dwellTimer.Interval = delay;
+            _dwellTimer.Start();
+        };
+        host.MouseLeave += (_, _) => { if (ReferenceEquals(_dwellHost, host)) CancelDwell(); };
+        host.PreviewMouseLeftButtonDown += (_, _) => CancelDwell();
+    }
+
+    private void CancelDwell()
+    {
+        _dwellTimer.Stop();
+        _dwellHost = null;
+        _dwellAction = null;
     }
 
     private void FinishDwell()
     {
-        _dwellTimer.Stop();
-        var bar = _dwellBar;
         var open = _dwellAction;
-        _dwellBar = null;
-        _dwellAction = null;
-        if (bar != null)
-        {
-            // A quick "done" flash: the full bar brightens, then fades.
-            var flash = new DoubleAnimationUsingKeyFrames();
-            flash.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(80))));
-            flash.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(360)), new QuadraticEase()));
-            bar.BeginAnimation(OpacityProperty, flash);
-        }
-        if (_state == State.Open && _appDrag == null) open?.Invoke();
+        CancelDwell();
+        if (open == null || _state != State.Open || _appDrag != null) return;
+        _hoverOpenedAt = DateTime.UtcNow;
+        open();
     }
 
     private const double PlayerRowHeight = 168;
@@ -2317,19 +2308,12 @@ public partial class IslandWindow : Window
             Cursor = Cursors.Hand,
             ToolTip = tip,
         };
-        if (dwellOpen != null)
-        {
-            var bar = MakeDwellBar();
-            item.Child = new Grid { Children = { content, bar } };
-            AttachDwell(item, bar, dwellOpen, dwellIsOpen ?? (() => false));
-        }
-        else
-        {
-            item.Child = content;
-        }
+        item.Child = content;
+        if (dwellOpen != null) AttachDwell(item, dwellOpen, dwellIsOpen ?? (() => false), HoverOpenDelay);
         item.MouseLeftButtonUp += (_, e) =>
         {
             e.Handled = true;
+            if (dwellOpen != null && JustHoverOpened) return; // hovering already opened it; don't toggle it shut
             click();
         };
         StatusPanel.Children.Add(item);
@@ -2357,6 +2341,12 @@ public partial class IslandWindow : Window
         if (panel == "close")
         {
             SetState(State.Closed);
+            return;
+        }
+        if (panel.StartsWith("absorb:", StringComparison.Ordinal) && long.TryParse(panel.AsSpan(7), out long handle))
+        {
+            // Test helper: swallow that window as if it had been dropped on the black hole.
+            AbsorbWindow(new IntPtr(handle), null);
             return;
         }
         if (panel == "restore")
@@ -3167,11 +3157,11 @@ public partial class IslandWindow : Window
 
     // ---------------------------------------------------------------- helpers
 
-    /// <summary>A damped spring (response ≈ 0.4 s, damping ≈ 0.8): quick, with a small organic overshoot.</summary>
+    /// <summary>A damped spring (response ≈ 0.33 s, damping ≈ 0.8): quick, with a small organic overshoot.</summary>
     private sealed class Spring
     {
-        private const double Stiffness = 240;
-        private const double Damping = 25;
+        private const double Stiffness = 340;
+        private const double Damping = 30;
 
         public Spring(double value)
         {
