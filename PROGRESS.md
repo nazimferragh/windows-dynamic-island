@@ -13,9 +13,11 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `c13684c` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `39bdbe1` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **Smooth genie** (`39bdbe1`): the funnel is one warped GPU mesh with rounded corners (the sliced version looked
+  stepped/"broken Android" to the owner); verified by frame bursts, ~70 fps.
 - **The island eats windows like a vacuum** (genie/funnel into the notch; the owner drew it:
   the black island itself should suck the app in). Replaces the orbiting accretion-disk version
   from `390334f`, which the owner didn't want. Island opens its mouth while eating, gulps after;
@@ -112,6 +114,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 39bdbe1 · Genie funnel rendered as one smooth mesh (no slices), neck tied to the mouth · pushed, deployed
 - 2026-10-01 · c13684c · Island sucks windows in like a vacuum (genie funnel into the notch) and pours them back out · pushed, deployed
 - 2026-10-01 · 390334f · Real black-hole eat/spit animation (accretion disk spiral, spaghettification, redshift), instant hover-open, smoother island opening · pushed, deployed
 - 2026-10-01 · 6e01e57 · Hover-to-open icons, new absorb + emerge animations, reworked snap panel with gliding windows, drag-to-rearrange apps · pushed, deployed
