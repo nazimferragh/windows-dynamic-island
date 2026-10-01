@@ -37,6 +37,8 @@ public partial class IslandWindow : Window
     private static readonly Silhouette ClosedMediaShape = new(290, 32, 6, 10);
     private static readonly Silhouette ClosedMediaHoverShape = new(304, 35, 6, 11);
     private static readonly Silhouette ClosedVaultShape = new(250, 32, 6, 10);
+    private static readonly Silhouette ClosedLiveShape = new(280, 32, 6, 10);
+    private static readonly Silhouette ClosedLiveHoverShape = new(294, 35, 6, 11);
     private static readonly Silhouette ClosedVaultHoverShape = new(264, 35, 6, 11);
     private static readonly Silhouette PeekShape = new(290, 58, 8, 18);
     private static readonly Silhouette NotifyShape = new(470, 84, 10, 26);
@@ -214,6 +216,15 @@ public partial class IslandWindow : Window
         RebuildStatus();
         SystemStatus.Current.Changed += RebuildStatus;
         Closed += (_, _) => SystemStatus.Current.Changed -= RebuildStatus;
+        BuildLiveBars();
+        MicActivity.Current.Changed += OnMicActivityChanged;
+        Closed += (_, _) =>
+        {
+            MicActivity.Current.Changed -= OnMicActivityChanged;
+            _liveTimer.Stop();
+        };
+        _liveTimer.Tick += (_, _) => UpdateLive();
+        OnMicActivityChanged();
         ApplyAppearance();
         ApplyState(animate: false);
     }
@@ -355,6 +366,7 @@ public partial class IslandWindow : Window
             case State.Open:
                 double h = OpenShape.Height;
                 if (ListPanelShown) return new Silhouette(640, h + ListPanelExtra, 12, 28);
+                if (LiveShown) h += 58;
                 if (DownloadsShown && _downloads.Items.Count > 0) h += _downloadsHeight;
                 if (hasVault) h += 130;
                 return new Silhouette(640, h, 12, 28);
@@ -370,7 +382,8 @@ public partial class IslandWindow : Window
             case State.DownloadStart:
                 return DownloadStartShape;
         }
-        // Closed priority: download > media > black hole > idle.
+        // Closed priority: call/recording > download > media > black hole > idle.
+        if (LiveShown) return _hovered ? ClosedLiveHoverShape : ClosedLiveShape;
         if (dlActive) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
         if (hasMedia && ClosedMediaShown) return _hovered ? ClosedMediaHoverShape : ClosedMediaShape;
         if (hasVault) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
@@ -403,12 +416,16 @@ public partial class IslandWindow : Window
         Reveal(NotificationContent, _state == State.Notify, animate);
         Reveal(DownloadBurstContent, _state == State.DownloadStart, animate);
         SetBurstAnimating(_state == State.DownloadStart);
-        bool dlActive = DownloadActive;
-        bool closedMedia = hasMedia && ClosedMediaShown;
+        bool live = LiveShown;
+        bool dlActive = DownloadActive && !live;
+        bool closedMedia = hasMedia && ClosedMediaShown && !live;
+        Reveal(ClosedLive, closed && live, animate);
         Reveal(ClosedDownload, closed && dlActive, animate);
         Reveal(ClosedMedia, closed && closedMedia && !dlActive, animate);
-        Reveal(PeekText, _state == State.Peek && hasMedia && !dlActive, animate);
-        Reveal(ClosedVault, closed && !closedMedia && !dlActive && _visibleItems.Count > 0, animate);
+        Reveal(PeekText, _state == State.Peek && hasMedia && !dlActive && !live, animate);
+        Reveal(ClosedVault, closed && !closedMedia && !dlActive && !live && _visibleItems.Count > 0, animate);
+        LiveSection.Visibility = _state == State.Open && live && !ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
+        SetLiveAnimating(live && (closed || _state == State.Open));
         Reveal(BlackHoleContent, _state == State.Attract && !_snapPanel, animate);
         Reveal(DropPanelContent, _state == State.Attract && _snapPanel, animate);
         if (_snapPanel) DropLabel.Text = DropLabelText();
@@ -1833,6 +1850,105 @@ public partial class IslandWindow : Window
     private const double PlayerRowHeight = 168;
     /// <summary>The Wi‑Fi/Bluetooth lists get more room than the player.</summary>
     private const double ListPanelExtra = 84;
+
+    // ---------------------------------------------------------------- calls and recordings (live activity)
+
+    private readonly DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(60) };
+    private readonly List<System.Windows.Shapes.Rectangle> _liveBars = new(), _liveOpenBars = new();
+    private double _liveLevel;
+    private static readonly Brush CallGreen = Frozen(Color.FromRgb(0x30, 0xD1, 0x58));
+    private static readonly Brush RecordRed = Frozen(Color.FromRgb(0xFF, 0x45, 0x3A));
+
+    private bool LiveShown => AppSettings.Current.ShowMicActivity && MicActivity.Current.Active != null;
+
+    private void BuildLiveBars()
+    {
+        foreach (var (host, list, height) in new[] { (LiveBars, _liveBars, 12.0), (LiveOpenBars, _liveOpenBars, 18.0) })
+            for (int i = 0; i < 5; i++)
+            {
+                var bar = new System.Windows.Shapes.Rectangle
+                {
+                    Width = 2.6,
+                    Height = height,
+                    RadiusX = 1.3,
+                    RadiusY = 1.3,
+                    Margin = new Thickness(i == 0 ? 0 : 2, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    RenderTransformOrigin = new Point(0.5, 0.5),
+                    RenderTransform = new ScaleTransform(1, 0.2),
+                };
+                host.Children.Add(bar);
+                list.Add(bar);
+            }
+    }
+
+    private void OnMicActivityChanged()
+    {
+        var use = MicActivity.Current.Active;
+        if (use != null)
+        {
+            var color = use.IsCall ? CallGreen : RecordRed;
+            LiveDot.Fill = color;
+            LiveOpenDot.Fill = color;
+            foreach (var bar in _liveBars.Concat(_liveOpenBars)) bar.Fill = color;
+            LiveName.Text = use.AppName;
+            LiveOpenTitle.Text = use.IsCall ? $"{use.AppName} call" : $"{use.AppName} is using the microphone";
+        }
+        UpdateLive();
+        if (IsLoaded) ApplyState(animate: true);
+    }
+
+    private void SetLiveAnimating(bool on)
+    {
+        if (on == _liveTimer.IsEnabled) return;
+        if (on) _liveTimer.Start();
+        else _liveTimer.Stop();
+    }
+
+    /// <summary>Timer text, mute state and the live mic level bars (60 ms, only while shown).</summary>
+    private void UpdateLive()
+    {
+        var use = MicActivity.Current.Active;
+        if (use == null) return;
+        var elapsed = DateTime.UtcNow - use.Since;
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        string time = elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"m\:ss");
+        LiveTimer.Text = time;
+        bool muted = Interop.Microphone.IsMuted();
+        LiveOpenSub.Text = (use.IsCall ? "On a call · " : "Recording · ") + time + (muted ? " · microphone muted" : "");
+        LiveMuteText.Text = muted ? "Unmute mic" : "Mute mic";
+        LiveMuteButton.Background = muted ? RecordRed : Frozen(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
+
+        // Smooth the level so the bars move like a voice, not like noise.
+        double level = muted ? 0 : Math.Min(1, Interop.Microphone.Level() * 2.2);
+        _liveLevel = level > _liveLevel ? level : _liveLevel * 0.82 + level * 0.18;
+        double t = Environment.TickCount64 / 1000.0;
+        for (int i = 0; i < _liveBars.Count; i++)
+        {
+            double wobble = 0.55 + 0.45 * Math.Sin(t * 9 + i * 1.7);
+            double scale = Math.Clamp(0.18 + _liveLevel * wobble, 0.18, 1);
+            ((ScaleTransform)_liveBars[i].RenderTransform).ScaleY = scale;
+            ((ScaleTransform)_liveOpenBars[i].RenderTransform).ScaleY = scale;
+        }
+    }
+
+    private void LiveMute_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        Interop.Microphone.SetMuted(!Interop.Microphone.IsMuted());
+        UpdateLive();
+    }
+
+    private void LiveOpenApp_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        var use = MicActivity.Current.Active;
+        if (use == null) return;
+        bool shown = use.PackageFamily != null ? WindowFinder.ActivateWindowOfPackage(use.PackageFamily)
+            : use.ExePath != null && WindowFinder.ActivateWindowOf(use.ExePath);
+        if (!shown && use.PackageFamily != null) OpenUri("shell:AppsFolder\\" + use.PackageFamily + "!App");
+        CloseAfterAction();
+    }
 
     // ---------------------------------------------------------------- status icons (top row)
 

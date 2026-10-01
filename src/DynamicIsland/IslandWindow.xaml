@@ -100,6 +100,20 @@
                                     BarWidth="2.5" BarHeight="13" BarSpacing="2.2" />
             </Grid>
 
+            <!-- Closed, a call or recording in progress: dot + app on the left, timer + live mic level on the right. -->
+            <Grid x:Name="ClosedLive" Width="280" Height="32" VerticalAlignment="Top" HorizontalAlignment="Center"
+                  Opacity="0" IsHitTestVisible="False">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="15,0,0,0">
+                    <Ellipse x:Name="LiveDot" Width="8" Height="8" VerticalAlignment="Center" />
+                    <TextBlock x:Name="LiveName" FontSize="12" FontWeight="SemiBold" Foreground="White" Margin="8,0,0,0"
+                               VerticalAlignment="Center" MaxWidth="120" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,15,0">
+                    <TextBlock x:Name="LiveTimer" FontSize="12" FontWeight="SemiBold" Foreground="White" VerticalAlignment="Center" Margin="0,0,9,0" />
+                    <StackPanel x:Name="LiveBars" Orientation="Horizontal" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
             <!-- Sneak peek when a new song starts. -->
             <TextBlock x:Name="PeekText" Width="262" Margin="0,33,0,0" VerticalAlignment="Top" HorizontalAlignment="Center"
                        Style="{StaticResource OneLine}" TextAlignment="Center" FontSize="12" Foreground="White"
@@ -228,10 +242,39 @@
                     <RowDefinition x:Name="PlayerRow" Height="168" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
+                <!-- A call or recording in progress: who, how long, live mic level, mute and open. -->
+                <Grid x:Name="LiveSection" Grid.Row="2" Margin="26,0,26,12" Height="46" Visibility="Collapsed">
+                    <Border CornerRadius="12" Background="#14FFFFFF" />
+                    <Grid Margin="14,0,8,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse x:Name="LiveOpenDot" Width="9" Height="9" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="LiveOpenTitle" FontSize="12.5" FontWeight="SemiBold" Foreground="White" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="LiveOpenSub" FontSize="11" Foreground="{StaticResource SecondaryText}" />
+                        </StackPanel>
+                        <StackPanel x:Name="LiveOpenBars" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border x:Name="LiveMuteButton" CornerRadius="9" Padding="12,4,12,5" Margin="0,0,6,0" Cursor="Hand" Background="#26FFFFFF"
+                                    MouseLeftButtonUp="LiveMute_Click">
+                                <TextBlock x:Name="LiveMuteText" Text="Mute mic" FontSize="11.5" FontWeight="SemiBold" Foreground="White" />
+                            </Border>
+                            <Border CornerRadius="9" Padding="12,4,12,5" Cursor="Hand" Background="#26FFFFFF" MouseLeftButtonUp="LiveOpenApp_Click">
+                                <TextBlock Text="Open app" FontSize="11.5" FontWeight="SemiBold" Foreground="White" />
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
                 <!-- Downloads (shown while something is downloading) -->
-                <Grid x:Name="DownloadsSection" Grid.Row="2" Margin="26,0,26,10" Visibility="Collapsed">
+                <Grid x:Name="DownloadsSection" Grid.Row="3" Margin="26,0,26,10" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="26" />
                         <RowDefinition Height="Auto" />
@@ -267,7 +310,7 @@
                 </Grid>
 
                 <!-- Black hole shelf -->
-                <Grid x:Name="ShelfSection" Grid.Row="3" Margin="26,0,26,18">
+                <Grid x:Name="ShelfSection" Grid.Row="4" Margin="26,0,26,18">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="24" />
                         <RowDefinition Height="*" />

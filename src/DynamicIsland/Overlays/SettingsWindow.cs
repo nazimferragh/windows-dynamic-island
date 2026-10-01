@@ -287,6 +287,7 @@ internal sealed class SettingsWindow : Window
                 Hint("Click the artwork in the open island to keep watching the song in the island's player.");
                 break;
             case "Notifications":
+                Toggle("Show calls and microphone use", "A green dot and timer during calls; red while an app records (voice notes, recorders)", s.ShowMicActivity, v => AppSettings.Update(x => x.ShowMicActivity = v));
                 Toggle("Show notifications in the island", "Messages, emails and alerts appear at the top of the screen", s.NotificationsInIsland, v => AppSettings.Update(x => x.NotificationsInIsland = v));
                 Toggle("Hide Windows' notification pop-ups", "Show them only in the island. They still go to the notification center", s.HideWindowsBanners, v => AppSettings.Update(x => x.HideWindowsBanners = v));
                 Choice("Keep each notification on screen for", "", new[] { ("3 s", 3), ("5 s", 5), ("8 s", 8) }, s.NotificationSeconds, v => AppSettings.Update(x => x.NotificationSeconds = v));

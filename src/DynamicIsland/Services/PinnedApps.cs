@@ -214,18 +214,54 @@ internal static class WindowFinder
     private const int SW_RESTORE = 9;
     private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetPackageFamilyName(IntPtr process, ref int length, StringBuilder? name);
+
+    /// <summary>Brings forward the window of a Store app (by package family, e.g. WhatsApp).</summary>
+    public static bool ActivateWindowOfPackage(string family)
+    {
+        var families = new Dictionary<uint, string>();
+        string FamilyOf(uint pid)
+        {
+            if (families.TryGetValue(pid, out var f)) return f;
+            var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            f = "";
+            if (h != IntPtr.Zero)
+            {
+                int len = 0;
+                GetPackageFamilyName(h, ref len, null);
+                if (len > 0)
+                {
+                    var sb = new StringBuilder(len);
+                    if (GetPackageFamilyName(h, ref len, sb) == 0) f = sb.ToString();
+                }
+                CloseHandle(h);
+            }
+            return families[pid] = f;
+        }
+        return Activate(pid => string.Equals(FamilyOf(pid), family, StringComparison.OrdinalIgnoreCase));
+    }
+
     public static bool ActivateWindowOf(string exePath)
     {
-        IntPtr found = IntPtr.Zero;
         var names = new Dictionary<uint, string>();
+        return Activate(pid =>
+        {
+            if (!names.TryGetValue(pid, out var image)) names[pid] = image = ImagePath(pid);
+            return string.Equals(image, exePath, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    private static bool Activate(Func<uint, bool> isTheApp)
+    {
+        IntPtr found = IntPtr.Zero;
         EnumWindows((hwnd, _) =>
         {
             if (!IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != IntPtr.Zero || GetWindowTextLength(hwnd) == 0) return true;
             if ((GetWindowLongPtr(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
             if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, 4) == 0 && cloaked != 0) return true; // other desktop / hidden
             GetWindowThreadProcessId(hwnd, out uint pid);
-            if (!names.TryGetValue(pid, out var image)) names[pid] = image = ImagePath(pid);
-            if (!string.Equals(image, exePath, StringComparison.OrdinalIgnoreCase)) return true;
+            if (!isTheApp(pid)) return true;
             found = hwnd;
             return false; // top-most in z-order = the one used last
         }, IntPtr.Zero);

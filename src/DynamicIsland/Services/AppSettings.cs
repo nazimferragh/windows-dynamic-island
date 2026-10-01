@@ -25,6 +25,9 @@ public sealed class AppSettings
     public bool ShowClosedMedia { get; set; } = true;
     public bool BlockYouTubeAds { get; set; } = true;
 
+    // Calls and microphone
+    public bool ShowMicActivity { get; set; } = true;
+
     // Notifications
     public bool NotificationsInIsland { get; set; } = true;
     public bool HideWindowsBanners { get; set; } = true;

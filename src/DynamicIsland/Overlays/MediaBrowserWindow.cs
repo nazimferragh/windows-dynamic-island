@@ -72,7 +72,7 @@ internal sealed class MediaBrowserWindow : Window
     private readonly WebView2 _web = new();
     private readonly TextBox _search = new();
     private readonly Grid _fallback = new() { Visibility = Visibility.Collapsed };
-    private readonly double _dipWidth = 780, _dipHeight = 560;
+    private readonly double _dipWidth = 880, _dipHeight = 640;
     private IntPtr _hwnd;
     private bool _ready;
     private bool _initFailed;
@@ -148,6 +148,7 @@ internal sealed class MediaBrowserWindow : Window
     private UIElement BuildLayout()
     {
         var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
@@ -235,16 +236,131 @@ internal sealed class MediaBrowserWindow : Window
         Grid.SetRow(bar, 0);
         root.Children.Add(bar);
 
-        Grid.SetRow(_web, 1);
+        var nav = BuildNavigation();
+        Grid.SetRow(nav, 1);
+        root.Children.Add(nav);
+
+        Grid.SetRow(_web, 2);
         _web.DefaultBackgroundColor = System.Drawing.Color.Black;
         root.Children.Add(_web);
 
         BuildFallback();
-        Grid.SetRow(_fallback, 1);
+        Grid.SetRow(_fallback, 2);
         root.Children.Add(_fallback);
 
         SetPlaceholder();
         return root;
+    }
+
+    // ---------------------------------------------------------------- navigation + account
+
+    private readonly Border _back = new(), _forward = new();
+    private readonly TextBlock _accountLabel = new() { FontSize = 12.5, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+    private bool _signedIn;
+
+    private const string SignInUrl =
+        "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3D%252F";
+
+    /// <summary>
+    /// Back / Forward, YouTube's main places (Home, Subscriptions, You, History) and the account
+    /// button, so the whole site can be used from the panel (YouTube's own top bar stays hidden).
+    /// </summary>
+    private UIElement BuildNavigation()
+    {
+        var row = new Grid { Margin = new Thickness(14, 0, 14, 10) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal };
+        StyleNavButton(_back, Glyph("\uE72B"), () => { if (_ready && _web.CoreWebView2.CanGoBack) _web.CoreWebView2.GoBack(); }, "Back");
+        StyleNavButton(_forward, Glyph("\uE72A"), () => { if (_ready && _web.CoreWebView2.CanGoForward) _web.CoreWebView2.GoForward(); }, "Forward");
+        left.Children.Add(_back);
+        left.Children.Add(_forward);
+        left.Children.Add(new Border { Width = 1, Height = 18, Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)), Margin = new Thickness(6, 0, 8, 0) });
+        foreach (var (label, url) in new[]
+        {
+            ("Home", "https://www.youtube.com/"),
+            ("Subscriptions", "https://www.youtube.com/feed/subscriptions"),
+            ("You", "https://www.youtube.com/feed/you"),
+            ("History", "https://www.youtube.com/feed/history"),
+            ("Playlists", "https://www.youtube.com/feed/playlists"),
+        })
+        {
+            var b = new Border();
+            StyleNavButton(b, new TextBlock { Text = label, FontSize = 12.5, Foreground = Brushes.White }, () => Go(url), label);
+            left.Children.Add(b);
+        }
+        row.Children.Add(left);
+
+        var account = new Border();
+        var accountContent = new StackPanel { Orientation = Orientation.Horizontal, Children = { Glyph("\uE77B"), _accountLabel } };
+        _accountLabel.Margin = new Thickness(7, 0, 0, 0);
+        StyleNavButton(account, accountContent, () => Go(_signedIn ? "https://www.youtube.com/account" : SignInUrl), "Your YouTube account");
+        account.ContextMenu = BuildAccountMenu();
+        Grid.SetColumn(account, 1);
+        row.Children.Add(account);
+        UpdateAccount();
+        return row;
+    }
+
+    private ContextMenu BuildAccountMenu()
+    {
+        var menu = new ContextMenu();
+        var switchAccount = new MenuItem { Header = "Switch account" };
+        switchAccount.Click += (_, _) => Go(SignInUrl);
+        var signOut = new MenuItem { Header = "Sign out" };
+        signOut.Click += (_, _) => Go("https://www.youtube.com/logout");
+        menu.Items.Add(switchAccount);
+        menu.Items.Add(signOut);
+        return menu;
+    }
+
+    private static TextBlock Glyph(string glyph) => new()
+    {
+        Text = glyph,
+        FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+        FontSize = 13,
+        Foreground = Brushes.White,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    private static void StyleNavButton(Border b, UIElement content, Action click, string tip)
+    {
+        b.Padding = new Thickness(10, 5, 10, 6);
+        b.Margin = new Thickness(0, 0, 4, 0);
+        b.CornerRadius = new CornerRadius(8);
+        b.Cursor = Cursors.Hand;
+        b.ToolTip = tip;
+        b.Child = content;
+        var idle = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        var hover = new SolidColorBrush(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+        b.Background = idle;
+        b.MouseEnter += (_, _) => b.Background = hover;
+        b.MouseLeave += (_, _) => b.Background = idle;
+        b.MouseLeftButtonUp += (_, _) => click();
+    }
+
+    private void Go(string url)
+    {
+        if (_ready) _web.CoreWebView2.Navigate(url);
+        else if (_initFailed) OpenInBrowser("");
+    }
+
+    /// <summary>Back/forward availability and whether a YouTube account is signed in (its login cookie).</summary>
+    private async void UpdateAccount()
+    {
+        if (_ready)
+        {
+            _back.Opacity = _web.CoreWebView2.CanGoBack ? 1 : 0.4;
+            _forward.Opacity = _web.CoreWebView2.CanGoForward ? 1 : 0.4;
+            try
+            {
+                var cookies = await _web.CoreWebView2.CookieManager.GetCookiesAsync("https://www.youtube.com");
+                _signedIn = cookies.Exists(c => c.Name == "LOGIN_INFO" || c.Name == "SID");
+            }
+            catch { }
+        }
+        _accountLabel.Text = _signedIn ? "Account" : "Sign in";
     }
 
     private void BuildFallback()
@@ -385,6 +501,7 @@ internal sealed class MediaBrowserWindow : Window
             {
                 try { await _web.CoreWebView2.ExecuteScriptAsync(HideMastheadScript); } catch { }
                 _ = UpdateNowPlayingAsync();
+                UpdateAccount();
                 if (_adBlockOn && !_adBlockConfirmed)
                 {
                     try
@@ -396,7 +513,12 @@ internal sealed class MediaBrowserWindow : Window
                 }
             };
             // SPA navigations (clicking a video) don't reload the document, so also watch the URL.
-            _web.CoreWebView2.SourceChanged += (_, _) => _ = UpdateNowPlayingAsync();
+            _web.CoreWebView2.SourceChanged += (_, _) =>
+            {
+                _ = UpdateNowPlayingAsync();
+                UpdateAccount();
+            };
+            _web.CoreWebView2.HistoryChanged += (_, _) => UpdateAccount();
 
             // Downloads started from the in-island browser get exact progress in the island.
             _web.CoreWebView2.DownloadStarting += (_, e) =>
