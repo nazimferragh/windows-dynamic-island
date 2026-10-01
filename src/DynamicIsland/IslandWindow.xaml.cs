@@ -45,17 +45,15 @@ public partial class IslandWindow : Window
     private static readonly Silhouette DownloadStartShape = new(210, 60, 10, 24);
     private static readonly Silhouette OpenShape = new(640, 206, 12, 32);
     private static readonly Silhouette OpenShelfShape = new(640, 336, 14, 32);
-    private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
     private static readonly Silhouette DropPanelShape = new(720, 154, 12, 30);
     private static readonly Silhouette DropPanelArmedShape = new(736, 160, 12, 32);
 
     // Where a dragged window is pulled in / captured, in DIPs relative to the notch's top-center.
-    // The capture zone is deliberately small and needs a short hold: the top of the screen is
-    // busy (browser tab strips, drag-to-maximize), and a window must never be swallowed by accident.
-    private const double AttractRadius = 320;
-    private const double CaptureHalfWidth = 170;
-    private const double CaptureDepth = 84;
-    private static readonly TimeSpan ArmDelay = TimeSpan.FromMilliseconds(450);
+    // As in the owner-approved Black Hole Lab preview: the island grows as the window comes near,
+    // and letting go anywhere in the zone under it eats the window at once (no hold).
+    private const double AttractRadius = 420;
+    private const double CaptureHalfWidth = 230;
+    private const double CaptureDepth = 130;
 
     private static readonly Color HoleGlow = Color.FromRgb(150, 90, 255);
 
@@ -104,7 +102,6 @@ public partial class IslandWindow : Window
 
     // Black hole: a window being dragged toward us.
     private double _attraction; // 0..1
-    private DateTime? _zoneEnteredAt;
     private bool _inZone;
     private bool _capture; // armed: releasing now absorbs the window
     // The window, its bounds and the cursor at the moment it was armed (to place it on release).
@@ -381,9 +378,10 @@ public partial class IslandWindow : Window
                 return new Silhouette(640, h, 12, 28);
             case State.Attract:
                 if (_snapPanel) return _capture ? DropPanelArmedShape : DropPanelShape;
-                if (_capture) return CaptureShape;
+                // The island opens up as the window comes near, to the same size it eats at.
+                var near = ClosedSilhouette(hasMedia, hasVault, dlActive);
                 double a = _attraction;
-                return new Silhouette(250 + 150 * a, 36 + 26 * a, 7 + 4 * a, 12 + 10 * a);
+                return new Silhouette(near.Width * (1 + 0.45 * a), near.Height * (1 + 0.55 * a), near.Flare + 2 * a, near.Radius * (1 + 0.5 * a));
             case State.Peek when hasMedia:
                 return PeekShape;
             case State.Notify:
@@ -452,7 +450,12 @@ public partial class IslandWindow : Window
         Reveal(ClosedVault, closed && !closedMedia && !dlActive && !live && _visibleItems.Count > 0, animate);
         LiveSection.Visibility = _state == State.Open && live && !ListPanelShown ? Visibility.Visible : Visibility.Collapsed;
         SetLiveAnimating(live && (closed || _state == State.Open));
-        Reveal(BlackHoleContent, _state == State.Attract && !_snapPanel, animate);
+        bool hintOn = _state == State.Attract && !_snapPanel && _capture;
+        if (hintOn != _dropHintShown)
+        {
+            _dropHintShown = hintOn;
+            DropHint.BeginAnimation(OpacityProperty, new DoubleAnimation(hintOn ? 1 : 0, TimeSpan.FromMilliseconds(200)));
+        }
         bool dropShown = _state == State.Attract && _snapPanel;
         Reveal(DropPanelContent, dropShown, animate);
         if (dropShown && !_dropPanelShown && animate) AnimateDropPanelIn();
@@ -489,8 +492,7 @@ public partial class IslandWindow : Window
         bool playing = _snapshot?.IsPlaying == true;
         ClosedEq.IsPlaying = playing && closed && !dlActive;
         OpenEq.IsPlaying = playing && _state == State.Open;
-        SetHoleSpinning(_state == State.Attract);
-        HoleText.Text = _capture ? "Release to absorb" : _inZone ? "Hold to absorb…" : "Drag here to absorb";
+        SetHoleSpinning(_state == State.Attract && _snapPanel);
 
         if (_state == State.Open)
         {
@@ -619,12 +621,13 @@ public partial class IslandWindow : Window
         double left = (ActualWidthOrDefault() - w) / 2; // the body; the flares reach just outside it
 
         var geometry = BuildNotchGeometry(left, w, h, flare, botR);
+        DropHint.Margin = new Thickness(0, h + 10, 0, 0);
         NotchShape.Data = geometry;
         NotchContent.Clip = geometry;
 
-        if (_state == State.Attract)
+        if (_state == State.Attract && _snapPanel)
         {
-            // A purple glow around the event horizon while a window is being pulled in.
+            // A purple glow around the event horizon while the drop panel is up.
             _shadow.Color = HoleGlow;
             _shadow.ShadowDepth = 0;
             _shadow.BlurRadius = 40;
@@ -702,7 +705,9 @@ public partial class IslandWindow : Window
         }
 
         var (dx, dy) = FromNotch(drag.CursorX, drag.CursorY);
-        bool panel = snapOn && Math.Abs(dx) < DropPanelShape.Width / 2 + 30 && dy < DropPanelShape.Height + 40;
+        // Dragging to the island eats the window. The snap layouts panel only comes up while Shift
+        // is held (or when the black hole is turned off), so it never gets in the eater's way.
+        bool panel = snapOn && (!holeOn || ShiftDown()) && Math.Abs(dx) < DropPanelShape.Width / 2 + 30 && dy < DropPanelShape.Height + 40;
         bool inZone;
         double attraction;
         if (panel)
@@ -735,12 +740,11 @@ public partial class IslandWindow : Window
         // would start its own drag-to-top maximize (the whole screen goes grey and blurry).
         HoldCursorBelowStrip();
 
-        // Only arm after the window has been held over the notch for a moment.
-        _zoneEnteredAt = inZone ? _zoneEnteredAt ?? DateTime.UtcNow : null;
-        bool armed = inZone && DateTime.UtcNow - _zoneEnteredAt >= ArmDelay;
+        // In the zone = armed right away: letting go eats it.
+        bool armed = inZone;
         if (armed && !_capture)
         {
-            _height.Kick(160); // a little "got it" bump
+            _height.Kick(120); // a little "got it" bump
             // Snapshot it now, while it still looks the way the user is holding it: on release
             // Windows may snap/maximize it (drag-to-top) before we get to hide it.
             var item = _vault.Prepare(drag.Hwnd, drag.StartPlacement);
@@ -791,7 +795,6 @@ public partial class IslandWindow : Window
 
     private void ExitAttract()
     {
-        _zoneEnteredAt = null;
         _armed = null;
         ClearSnapTarget();
         ClosePreviewSoon();
@@ -1103,9 +1106,9 @@ public partial class IslandWindow : Window
 
     private string DropLabelText()
     {
-        if (_inZone) return _capture ? "Release to tuck it away" : "Hold to tuck it away…";
+        if (_inZone) return "Let go to tuck it away";
         if (_snapCell != null) return _snapCell.Name;
-        return AppSettings.Current.BlackHoleEnabled ? "Drop on a layout, or hold over the black hole" : "Drop on a layout";
+        return AppSettings.Current.BlackHoleEnabled ? "Drop on a layout, or on the black hole" : "Drop on a layout";
     }
 
     /// <summary>Puts the dropped window in its zone, with a small "got it" bounce of the island.</summary>
@@ -1221,12 +1224,18 @@ public partial class IslandWindow : Window
         StartShapeAnimation();
     }
 
+    private bool _dropHintShown;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
+
+    /// <summary>Shift held right now (works while another app has focus, e.g. during a window drag).</summary>
+    private static bool ShiftDown() => (GetAsyncKeyState(0x10) & 0x8000) != 0;
+
     private void SetHoleSpinning(bool spin)
     {
         if (_spinning == spin) return;
         _spinning = spin;
         var animation = spin ? new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.1)) { RepeatBehavior = RepeatBehavior.Forever } : null;
-        HoleSpin.BeginAnimation(RotateTransform.AngleProperty, animation);
         DropHoleSpin.BeginAnimation(RotateTransform.AngleProperty, animation);
     }
 

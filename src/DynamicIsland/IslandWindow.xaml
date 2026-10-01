@@ -89,6 +89,12 @@
 
         <Path x:Name="NotchShape" Fill="Black" />
 
+        <!-- Under the island while a dragged window is over it: letting go eats it. -->
+        <Border x:Name="DropHint" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,42,0,0"
+                Background="#8C000000" CornerRadius="999" Padding="10,5,10,6" Opacity="0" IsHitTestVisible="False">
+            <TextBlock Text="Let go to tuck it away" Foreground="White" FontSize="12" FontWeight="SemiBold" />
+        </Border>
+
         <Grid x:Name="NotchContent">
 
             <!-- Closed, media playing: artwork left of the notch, bars on the right. -->
@@ -190,25 +196,6 @@
                     <TextBlock x:Name="NotifBody" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
                                Style="{StaticResource OneLine}" Margin="0,1,0,0" />
                 </StackPanel>
-            </Grid>
-
-            <!-- A window is being dragged toward the island. -->
-            <Grid x:Name="BlackHoleContent" Width="440" Height="96" VerticalAlignment="Top" HorizontalAlignment="Center"
-                  Opacity="0" IsHitTestVisible="False">
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,6,0,0">
-                    <Grid Width="28" Height="28">
-                        <Ellipse Width="14" Height="14" Fill="Black" />
-                        <Ellipse StrokeThickness="2.5" Stroke="{StaticResource HoleRingBrush}" RenderTransformOrigin="0.5,0.5">
-                            <Ellipse.RenderTransform>
-                                <RotateTransform x:Name="HoleSpin" />
-                            </Ellipse.RenderTransform>
-                        </Ellipse>
-                    </Grid>
-                    <TextBlock x:Name="HoleText" Text="Drop to absorb" Foreground="White" FontSize="13" FontWeight="SemiBold"
-                               Margin="10,0,0,0" VerticalAlignment="Center" />
-                </StackPanel>
-                <TextBlock Text="It'll wait here. Hover the island to get it back." Foreground="{StaticResource TertiaryText}"
-                           FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0" />
             </Grid>
 
             <!-- A window is being dragged up to the island, with snap layouts on: the drop panel.
