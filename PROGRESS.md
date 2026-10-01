@@ -13,14 +13,14 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `390334f` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: see Done log top (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
-- **Black hole looks like a real one** (`390334f`, owner asked for it): caught into a tilted
-  accretion disk under the island, spirals in faster each turn, stretched into a streak, reddens
-  to black, winks out in the notch with a collapsing debris ring; coming out runs it backwards.
-  Verified with frame bursts via `--panel absorb:<hwnd>` / `--panel restore` on a test window
-  (absorb ~87 frames/1.25 s, emerge ~80 frames/1.0 s).
+- **The island eats windows like a vacuum** (genie/funnel into the notch; the owner drew it:
+  the black island itself should suck the app in). Replaces the orbiting accretion-disk version
+  from `390334f`, which the owner didn't want. Island opens its mouth while eating, gulps after;
+  coming out pours back down from the notch. Verified with frame bursts on a test window
+  (absorb 49 frames/0.73 s, emerge 53 frames/0.65 s).
 - **Hover opens instantly** (`390334f`): Wi‑Fi/Bluetooth/Apps 90 ms, Settings 450 ms (it leaves
   the island); first version (`6e01e57`) used 1.9 s + fill bar, owner said too slow. Views slide
   in; island opens with a snappier spring, default hover delay 0.12 s, no blur on the open view.
@@ -112,6 +112,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · (see git log) · Island sucks windows in like a vacuum (genie funnel into the notch) and pours them back out · pushed, deployed
 - 2026-10-01 · 390334f · Real black-hole eat/spit animation (accretion disk spiral, spaghettification, redshift), instant hover-open, smoother island opening · pushed, deployed
 - 2026-10-01 · 6e01e57 · Hover-to-open icons, new absorb + emerge animations, reworked snap panel with gliding windows, drag-to-rearrange apps · pushed, deployed
 - 2026-10-01 · a66dba9 · YouTube account button + full navigation row; calls & mic recordings live in the island (timer, level, mute, open app) · pushed, deployed

@@ -66,12 +66,12 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   only to ignore the pointer passing through; Settings waits 450 ms since it leaves the island).
   The owner wants it instant; don't add a visible countdown. A click right after a hover-open
   doesn't toggle the view shut. Switching views slides the new one in.
-- **Black hole motion must look like a real black hole** (owner's request): `AbsorbAnimation`
-  catches the window into a tilted accretion disk (`Disk`) just under the island, it spirals round
-  faster each turn, is stretched into a streak (spaghettification), reddens and goes dark, and
-  winks out in the notch while a debris ring collapses with it. `EmergeAnimation` runs that
-  backwards (thrown out as a red streak, spiralling outward, then lands with a spring), or grows
-  the dragged card into the window. The real
+- **The island eats windows like a vacuum** (owner's request, after rejecting an orbiting
+  "accretion disk" version): `AbsorbAnimation` uses `Funnel`, a genie effect into the notch (the
+  snapshot is cut into strips, the ones nearest the island go first, so the window pinches into a
+  neck at the island's mouth and pours up into the black), while the island holds its mouth open
+  (`EatingShape`) and gulps at the end. `EmergeAnimation` runs the funnel backwards (pours out of
+  the notch onto its spot), or grows the dragged card into the window. The real
   window is only shown when the snapshot lands (`WindowVault.BeginRestore`/`FinishRestore`; in-flight
   windows are still saved, so a crash mid-animation can't lose them).
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
