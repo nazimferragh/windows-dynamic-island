@@ -5,6 +5,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
 using DynamicIsland.Interop;
 
 namespace DynamicIsland.Overlays;
@@ -216,39 +217,77 @@ internal abstract class FlightOverlay : Window
 }
 
 /// <summary>
-/// The island sucking a window in like a vacuum (the "genie" effect, into the notch). The snapshot
-/// is cut into thin horizontal strips; the strips nearest the island are pulled in first and the
-/// rest follow a moment later, each accelerating as it goes. So the window narrows into a neck at
-/// the island's mouth, the rest of it pours up through it, and it disappears into the black.
-/// Run backwards, the same funnel pours a window back out of the island.
+/// The island sucking a window in like a vacuum (the "genie" effect, into the notch). The
+/// snapshot is one smooth surface (a GPU mesh, so the edges curve cleanly with no steps or seams
+/// and the corners stay rounded); its rows are pulled in one after another: the rows nearest the
+/// island go first and the rest follow, each accelerating. So the window pinches into a neck at
+/// the island's mouth and pours up through it into the black. Run backwards, the same funnel pours
+/// a window back out of the island.
 /// </summary>
 internal sealed class Funnel
 {
-    private const int Strips = 72;
+    private const int Rows = 90, Cols = 18;
 
-    private readonly System.Windows.Shapes.Rectangle[] _strips = new System.Windows.Shapes.Rectangle[Strips];
-    private readonly MatrixTransform[] _transforms = new MatrixTransform[Strips];
-    private readonly double[] _y = new double[Strips + 1], _w = new double[Strips + 1], _x = new double[Strips + 1], _p = new double[Strips + 1];
+    private readonly Viewport3D _view = new() { IsHitTestVisible = false, ClipToBounds = false };
+    private readonly OrthographicCamera _camera = new() { LookDirection = new Vector3D(0, 0, -1), UpDirection = new Vector3D(0, 1, 0) };
+    private readonly MeshGeometry3D _mesh = new();
+    private readonly Canvas _stage;
+    private readonly double[] _y = new double[Rows + 1], _w = new double[Rows + 1], _x = new double[Rows + 1];
+    private Size _size;
 
     public Funnel(Canvas stage, BitmapSource? snapshot)
     {
-        Brush? whole = snapshot == null ? new SolidColorBrush(Color.FromRgb(28, 28, 30)) : null;
-        for (int i = 0; i < Strips; i++)
-        {
-            Brush fill = whole ?? new ImageBrush(snapshot)
+        _stage = stage;
+        var indices = new Int32Collection(Rows * Cols * 6);
+        var uv = new PointCollection((Rows + 1) * (Cols + 1));
+        for (int r = 0; r <= Rows; r++)
+            for (int c = 0; c <= Cols; c++)
+                uv.Add(new Point((double)c / Cols, (double)r / Rows));
+        for (int r = 0; r < Rows; r++)
+            for (int c = 0; c < Cols; c++)
             {
-                Viewbox = new Rect(0, (double)i / Strips, 1, 1.0 / Strips),
-                ViewboxUnits = BrushMappingMode.RelativeToBoundingBox,
-                Stretch = Stretch.Fill,
-            };
-            if (fill.CanFreeze) fill.Freeze();
-            _transforms[i] = new MatrixTransform();
-            // A fixed 100×100 rectangle placed by its transform only: no layout pass per frame.
-            _strips[i] = new System.Windows.Shapes.Rectangle { Width = 100, Height = 100, Fill = fill, RenderTransform = _transforms[i], IsHitTestVisible = false };
-            RenderOptions.SetBitmapScalingMode(_strips[i], BitmapScalingMode.Linear);
-            stage.Children.Add(_strips[i]);
-        }
+                int a = r * (Cols + 1) + c, b = a + 1, d = a + Cols + 1, e = d + 1;
+                indices.Add(a); indices.Add(d); indices.Add(b);
+                indices.Add(b); indices.Add(d); indices.Add(e);
+            }
+        indices.Freeze();
+        uv.Freeze();
+        _mesh.TriangleIndices = indices;
+        _mesh.TextureCoordinates = uv;
+
+        Brush face = snapshot == null ? new SolidColorBrush(Color.FromRgb(28, 28, 30)) : new ImageBrush(Rounded(snapshot)) { Stretch = Stretch.Fill };
+        RenderOptions.SetBitmapScalingMode(face, BitmapScalingMode.HighQuality);
+        face.Freeze();
+        // Emissive-style: full brightness from ambient white light, no shading.
+        var material = new DiffuseMaterial(face);
+        var model = new GeometryModel3D(_mesh, material) { BackMaterial = material };
+        var group = new Model3DGroup();
+        group.Children.Add(new AmbientLight(Colors.White));
+        group.Children.Add(model);
+        _view.Camera = _camera;
+        _view.Children.Add(new ModelVisual3D { Content = group });
+        RenderOptions.SetEdgeMode(_view, EdgeMode.Unspecified); // anti-aliased edges
+        stage.Children.Add(_view);
     }
+
+    /// <summary>The snapshot with the window's rounded corners baked in (once, before the animation).</summary>
+    private static BitmapSource Rounded(BitmapSource src)
+    {
+        int w = src.PixelWidth, h = src.PixelHeight;
+        double radius = Math.Clamp(w * 0.012, 6, 14);
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+        {
+            dc.PushClip(new RectangleGeometry(new Rect(0, 0, w, h), radius, radius));
+            dc.DrawImage(src, new Rect(0, 0, w, h));
+        }
+        var bitmap = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    private static double Smooth(double x) => x * x * x * (x * (x * 6 - 15) + 10); // smootherstep
 
     /// <summary>
     /// Draws the funnel at suction progress t (0 = the window untouched, 1 = all of it inside).
@@ -256,31 +295,44 @@ internal sealed class Funnel
     /// </summary>
     public void Apply(double t, Rect window, Point mouth, double mouthWidth)
     {
+        var size = new Size(_stage.ActualWidth, _stage.ActualHeight);
+        if (size != _size && size.Width > 0)
+        {
+            _size = size;
+            _view.Width = size.Width;
+            _view.Height = size.Height;
+            _camera.Width = size.Width;
+            _camera.Position = new Point3D(size.Width / 2, -size.Height / 2, 10);
+        }
+
         // Each row has its own clock: the top row (nearest the island) goes first, the bottom row
-        // starts last. Rows accelerate (a vacuum pull), and narrow faster than they rise, which
-        // forms the neck.
-        const double lag = 0.45;
-        for (int e = 0; e <= Strips; e++)
+        // last. A row narrows a little ahead of rising, which forms the neck; everything eases, so
+        // the outline is one smooth curve at every moment.
+        const double lag = 0.5;
+        double cx0 = window.Left + window.Width / 2;
+        for (int r = 0; r <= Rows; r++)
         {
-            double v = (double)e / Strips;
-            double p = Math.Clamp((t - lag * Math.Pow(v, 0.85)) / (1 - lag), 0, 1);
-            double rise = Math.Pow(p, 2.1);
-            double narrow = 1 - Math.Pow(1 - p, 2.2);
-            double deep = Math.Clamp((rise - 0.8) / 0.2, 0, 1); // inside the island, squeeze to a thread
-            _p[e] = rise;
-            _y[e] = window.Top + v * window.Height + (mouth.Y - (window.Top + v * window.Height)) * rise;
-            _w[e] = (window.Width + (mouthWidth - window.Width) * narrow) * (1 - 0.8 * deep);
-            _x[e] = window.Left + window.Width / 2 + (mouth.X - (window.Left + window.Width / 2)) * (1 - Math.Pow(1 - p, 1.6));
+            double v = (double)r / Rows;
+            double p = Math.Clamp((t - lag * Smooth(v)) / (1 - lag), 0, 1);
+            double rise = Math.Pow(p, 1.6);                   // gentle start, quick finish: a pull
+            // A row narrows as it nears the mouth (not before), so the neck always reaches up into
+            // the island instead of shrinking into a stub on its own.
+            double narrow = 1 - Math.Pow(1 - rise, 2.4);
+            double deep = Smooth(Math.Clamp((rise - 0.75) / 0.25, 0, 1)); // inside the island, a thread
+            double y0 = window.Top + v * window.Height;
+            _y[r] = y0 + (mouth.Y - y0) * rise;
+            _w[r] = (window.Width + (mouthWidth - window.Width) * narrow) * (1 - 0.85 * deep);
+            _x[r] = cx0 + (mouth.X - cx0) * Smooth(Math.Min(1, rise * 1.5));
         }
-        for (int i = 0; i < Strips; i++)
+
+        var positions = new Point3DCollection((Rows + 1) * (Cols + 1));
+        for (int r = 0; r <= Rows; r++)
         {
-            double top = _y[i], height = Math.Max(0.6, _y[i + 1] - _y[i] + 0.6); // a hair of overlap: no seams
-            double width = Math.Max(0.5, (_w[i] + _w[i + 1]) / 2), cx = (_x[i] + _x[i + 1]) / 2;
-            _transforms[i].Matrix = new Matrix(width / 100, 0, 0, height / 100, cx - width / 2, top);
-            // Light dies as it goes into the black.
-            double gone = (_p[i] + _p[i + 1]) / 2;
-            _strips[i].Opacity = 1 - Math.Clamp((gone - 0.82) / 0.18, 0, 1);
+            double left = _x[r] - _w[r] / 2, step = _w[r] / Cols, y = -_y[r];
+            for (int c = 0; c <= Cols; c++) positions.Add(new Point3D(left + step * c, y, 0));
         }
+        positions.Freeze();
+        _mesh.Positions = positions;
     }
 }
 
@@ -294,7 +346,7 @@ internal sealed class AbsorbAnimation : FlightOverlay
     /// <param name="target">The island's mouth (center of the notch), physical pixels.</param>
     /// <param name="dpiScale">Scale of the monitor it's on.</param>
     public AbsorbAnimation(BitmapSource? snapshot, WindowApi.RECT windowRect, Point target, double dpiScale)
-        : base("Absorb", snapshot, windowRect, PointRect(target), dpiScale, TimeSpan.FromMilliseconds(720))
+        : base("Absorb", snapshot, windowRect, PointRect(target), dpiScale, TimeSpan.FromMilliseconds(600))
     {
         _mouth = target;
         Visual.Visibility = Visibility.Hidden;
@@ -326,7 +378,7 @@ internal sealed class EmergeAnimation : FlightOverlay
     /// <param name="from">Where it starts: the island's mouth (a point-sized rect) or the dragged card, physical pixels.</param>
     /// <param name="to">The window's final visible bounds, physical pixels.</param>
     public EmergeAnimation(BitmapSource? snapshot, WindowApi.RECT from, WindowApi.RECT to, bool fromNotch, double dpiScale)
-        : base("Emerge", snapshot, to, from, dpiScale, TimeSpan.FromMilliseconds(fromNotch ? 640 : 380))
+        : base("Emerge", snapshot, to, from, dpiScale, TimeSpan.FromMilliseconds(fromNotch ? 620 : 380))
     {
         _from = from;
         _fromNotch = fromNotch;

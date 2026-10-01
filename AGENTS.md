@@ -68,8 +68,9 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   doesn't toggle the view shut. Switching views slides the new one in.
 - **The island eats windows like a vacuum** (owner's request, after rejecting an orbiting
   "accretion disk" version): `AbsorbAnimation` uses `Funnel`, a genie effect into the notch (the
-  snapshot is cut into strips, the ones nearest the island go first, so the window pinches into a
-  neck at the island's mouth and pours up into the black), while the island holds its mouth open
+  snapshot is one GPU mesh with rounded corners, never flat slices: those looked stepped and
+  "Android" to the owner; rows nearest the island go first and narrow as they near the mouth, so
+  the neck always reaches into the island and the window pours up into the black), while the island holds its mouth open
   (`EatingShape`) and gulps at the end. `EmergeAnimation` runs the funnel backwards (pours out of
   the notch onto its spot), or grows the dragged card into the window. The real
   window is only shown when the snapshot lands (`WindowVault.BeginRestore`/`FinishRestore`; in-flight
