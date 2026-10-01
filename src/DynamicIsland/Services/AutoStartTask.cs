@@ -24,6 +24,14 @@ public static class AutoStartTask
     public const string RegisterArg = "--register-autostart";   // + "high" | "normal"
     public const string UnregisterArg = "--unregister-autostart";
 
+    /// <summary>
+    /// The entry Windows lists under Settings › Apps › Startup and Task Manager › Startup apps. It only
+    /// hands off to the task (so the island keeps the rights the user chose); its on/off switch there
+    /// is honored by every automatic start.
+    /// </summary>
+    public const string StartupEntryArg = "--startup-entry";
+    private const string StartupApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValue = "DynamicIsland";
     private const string OurKey = @"Software\DynamicIsland";
@@ -67,7 +75,7 @@ public static class AutoStartTask
             bool ok = needsAdmin ? RunSchtasksElevated(args) : RunSchtasks(args).Code == 0;
             if (ok)
             {
-                RemoveRunKey(); // the task replaces it; a second, unelevated start would win the race
+                EnsureRunKey(); // the Startup apps entry; it defers to the task
                 using var ours = Registry.CurrentUser.CreateSubKey(OurKey);
                 ours.SetValue("HighPriority", high ? 1 : 0, RegistryValueKind.DWord);
                 Log.Info($"Start-with-Windows task registered ({(high ? "high priority" : "normal")})");
@@ -110,10 +118,14 @@ public static class AutoStartTask
         try
         {
             var task = Query();
-            if (task is { High: true }) return; // set up by the installer with admin rights; leave it
+            if (task is { High: true }) // set up by the installer with admin rights; leave it
+            {
+                EnsureRunKey();
+                return;
+            }
             if (task is { } t && t.Repeats && string.Equals(t.Command, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase))
             {
-                RemoveRunKey();
+                EnsureRunKey();
                 return;
             }
             Log.Info(task is { } old
@@ -125,6 +137,43 @@ public static class AutoStartTask
         {
             Log.Error("Couldn't check the start-with-Windows task", ex);
             EnsureRunKey();
+        }
+    }
+
+    // ---------------------------------------------------------------- Windows' own startup switch
+
+    /// <summary>
+    /// True if the user turned Dynamic Island off in Settings › Apps › Startup (or Task Manager).
+    /// Windows stores that per entry: the first byte is 2 (on) or 3 (off).
+    /// </summary>
+    public static bool DisabledInWindowsStartup()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(StartupApprovedKey);
+            return key?.GetValue(RunValue) is byte[] { Length: > 0 } data && (data[0] & 1) == 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Flips the same switch Windows shows in its Startup apps list (used by our Settings window).</summary>
+    public static void SetWindowsStartupEnabled(bool enabled)
+    {
+        try
+        {
+            var data = new byte[12];
+            data[0] = (byte)(enabled ? 2 : 3);
+            if (!enabled) BitConverter.GetBytes(DateTime.UtcNow.ToFileTimeUtc()).CopyTo(data, 4);
+            using var key = Registry.CurrentUser.CreateSubKey(StartupApprovedKey);
+            key.SetValue(RunValue, data, RegistryValueKind.Binary);
+            EnsureRunKey();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Couldn't change the startup setting", ex);
         }
     }
 
@@ -288,7 +337,7 @@ public static class AutoStartTask
         try
         {
             if (Environment.ProcessPath is not { } path) return;
-            var command = $"\"{path}\" {AutostartArg}";
+            var command = $"\"{path}\" {StartupEntryArg}";
             using var run = Registry.CurrentUser.CreateSubKey(RunKey);
             if (run.GetValue(RunValue) as string != command) run.SetValue(RunValue, command);
         }

@@ -2,7 +2,7 @@
 ; Built by build.ps1, which passes /DAppVersion=x.y.z.
 
 #ifndef AppVersion
-  #define AppVersion "0.5.0"
+  #define AppVersion "0.6.0"
 #endif
 
 #define AppName "Dynamic Island"
@@ -59,8 +59,10 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Registry]
 ; Starting with Windows is handled by a Task Scheduler task the app registers (see the "Always
-; running" page below). Clean up the Run entry older versions used.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "DynamicIsland"; Flags: deletevalue uninsdeletevalue
+; running" page below). The app also adds a Run entry so it's listed in Windows' Startup apps (it
+; only hands off to the task); uninstalling removes it and its on/off state.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "DynamicIsland"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: none; ValueName: "DynamicIsland"; Flags: uninsdeletevalue
 
 ; The app turns off Windows 11's drag-to-top snap layouts bar on first run (it sits right where the
 ; island is). Uninstalling removes the value, which restores Windows' default.

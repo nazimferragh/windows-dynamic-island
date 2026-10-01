@@ -124,6 +124,33 @@ public static class Guardian
         SignalQuit();
     }
 
+    /// <summary>Asks the running island to open its Settings window (the app was opened again by hand).</summary>
+    public static void RequestOpenSettings()
+    {
+        try
+        {
+            using var ours = Registry.CurrentUser.CreateSubKey(OurKey);
+            ours.SetValue("OpenSettingsRequested", 1, RegistryValueKind.DWord);
+        }
+        catch { }
+    }
+
+    /// <summary>True (once) if someone asked for the Settings window.</summary>
+    public static bool TakeOpenSettingsRequest()
+    {
+        try
+        {
+            using var ours = Registry.CurrentUser.OpenSubKey(OurKey, writable: true);
+            if (ours?.GetValue("OpenSettingsRequested") is not int v || v == 0) return false;
+            ours.DeleteValue("OpenSettingsRequested", throwOnMissingValue: false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static bool QuitRequested()
     {
         try

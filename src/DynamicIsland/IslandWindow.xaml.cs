@@ -63,6 +63,8 @@ public partial class IslandWindow : Window
     private readonly Int32Rect _monitor; // physical pixels
     private readonly MenuBarStrip _strip;
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
+    /// <summary>Sliders, today's date, download bar: the Windows accent (Settings › Match Windows colors), else white.</summary>
+    private readonly SolidColorBrush _uiBrush = new(Colors.White);
     private readonly DropShadowEffect _shadow = new() { Color = Colors.Black, BlurRadius = 30, ShadowDepth = 6, Direction = 270, Opacity = 0, RenderingBias = RenderingBias.Performance };
 
     private readonly Spring _width = new(ClosedIdleShape.Width);
@@ -136,6 +138,10 @@ public partial class IslandWindow : Window
 
         ClosedEq.BarBrush = _accentBrush;
         OpenEq.BarBrush = _accentBrush;
+        ProgressFill.Background = _uiBrush;
+        ProgressThumb.Fill = _uiBrush;
+        VolumeFill.Background = _uiBrush;
+        VolumeThumb.Fill = _uiBrush;
 
         _openTimer.Tick += (_, _) => { _openTimer.Stop(); SetState(State.Open); };
         _closeTimer.Tick += (_, _) =>
@@ -170,8 +176,12 @@ public partial class IslandWindow : Window
         _downloads.Changed += OnDownloadsChanged;
         _notifications.Received += OnNotificationReceived;
         _pins.Changed += RebuildApps;
+        WindowsTheme.Current.Changed += ApplyAppearance;
+        AppSettings.Changed += ApplyAppearance;
         Closed += (_, _) =>
         {
+            WindowsTheme.Current.Changed -= ApplyAppearance;
+            AppSettings.Changed -= ApplyAppearance;
             _pins.Changed -= RebuildApps;
             _media.Changed -= OnMediaChanged;
             _vault.Changed -= OnVaultChanged;
@@ -197,8 +207,48 @@ public partial class IslandWindow : Window
         RebuildShelf();
         RebuildDownloads();
         RebuildApps();
-        UpdateCalendar();
+        ApplyAppearance();
         ApplyState(animate: false);
+    }
+
+    /// <summary>Applies Windows colors and the user's settings. Runs at start and whenever either changes.</summary>
+    private void ApplyAppearance()
+    {
+        var s = AppSettings.Current;
+        bool match = s.MatchWindowsColors;
+        var theme = WindowsTheme.Current;
+        var target = match ? theme.AccentOnDark : Colors.White;
+        _uiBrush.BeginAnimation(SolidColorBrush.ColorProperty, IsLoaded ? new ColorAnimation(target, TimeSpan.FromMilliseconds(300)) : null);
+        if (!IsLoaded) _uiBrush.Color = target;
+        Brush bars = match ? _uiBrush : _accentBrush;
+        ClosedEq.BarBrush = bars;
+        OpenEq.BarBrush = bars;
+        _strip.SetLight(match && theme.SystemLight);
+
+        _openTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(s.HoverDelayMs, 50, 2000));
+        AppsButton.Visibility = s.PinnedAppsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        if (!s.PinnedAppsEnabled) _appsView = false;
+        if (!s.BlackHoleEnabled) ExitAttract();
+
+        UpdateCalendar();
+        RebuildDownloads();
+        if (IsLoaded) ApplyState(animate: true);
+    }
+
+    /// <summary>Today's date in the calendar: the Windows accent, or the song's color.</summary>
+    private Brush TodayBrush => AppSettings.Current.MatchWindowsColors ? _uiBrush : _accentBrush;
+
+    private bool DownloadsShown => AppSettings.Current.DownloadsEnabled;
+    private bool DownloadActive => DownloadsShown && _downloads.HasActive;
+    private bool ClosedMediaShown => AppSettings.Current.ShowClosedMedia;
+
+    private void GearButton_Click(object sender, RoutedEventArgs e)
+    {
+        _openTimer.Stop();
+        _closeTimer.Stop();
+        _hovered = false;
+        SetState(State.Closed);
+        (Application.Current as App)?.OpenSettings();
     }
 
     /// <summary>This island's monitor, in physical pixels.</summary>
@@ -290,12 +340,12 @@ public partial class IslandWindow : Window
     {
         bool hasMedia = _snapshot != null;
         bool hasVault = _visibleItems.Count > 0;
-        bool dlActive = _downloads.HasActive;
+        bool dlActive = DownloadActive;
         switch (_state)
         {
             case State.Open:
                 double h = OpenShape.Height;
-                if (_downloads.Items.Count > 0) h += _downloadsHeight;
+                if (DownloadsShown && _downloads.Items.Count > 0) h += _downloadsHeight;
                 if (hasVault) h += 130;
                 return new Silhouette(640, h, 20, 28);
             case State.Attract:
@@ -311,7 +361,7 @@ public partial class IslandWindow : Window
         }
         // Closed priority: download > media > black hole > idle.
         if (dlActive) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
-        if (hasMedia) return _hovered ? ClosedMediaHoverShape : ClosedMediaShape;
+        if (hasMedia && ClosedMediaShown) return _hovered ? ClosedMediaHoverShape : ClosedMediaShape;
         if (hasVault) return _hovered ? ClosedVaultHoverShape : ClosedVaultShape;
         return _hovered ? ClosedIdleHoverShape : ClosedIdleShape;
     }
@@ -342,17 +392,18 @@ public partial class IslandWindow : Window
         Reveal(NotificationContent, _state == State.Notify, animate);
         Reveal(DownloadBurstContent, _state == State.DownloadStart, animate);
         SetBurstAnimating(_state == State.DownloadStart);
-        bool dlActive = _downloads.HasActive;
+        bool dlActive = DownloadActive;
+        bool closedMedia = hasMedia && ClosedMediaShown;
         Reveal(ClosedDownload, closed && dlActive, animate);
-        Reveal(ClosedMedia, closed && hasMedia && !dlActive, animate);
+        Reveal(ClosedMedia, closed && closedMedia && !dlActive, animate);
         Reveal(PeekText, _state == State.Peek && hasMedia && !dlActive, animate);
-        Reveal(ClosedVault, closed && !hasMedia && !dlActive && _visibleItems.Count > 0, animate);
+        Reveal(ClosedVault, closed && !closedMedia && !dlActive && _visibleItems.Count > 0, animate);
         Reveal(BlackHoleContent, _state == State.Attract, animate);
         Reveal(OpenContent, _state == State.Open, animate);
         PlayerGrid.Visibility = _appsView ? Visibility.Collapsed : Visibility.Visible;
         AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
         AppsGlyphPath.Fill = _appsView ? Brushes.White : (Brush)FindResource("SecondaryText");
-        DownloadsSection.Visibility = _state == State.Open && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsSection.Visibility = _state == State.Open && DownloadsShown && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ShelfSection.Visibility = _state == State.Open && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         SetDownloadArrowAnimating(closed && dlActive);
 
@@ -526,7 +577,7 @@ public partial class IslandWindow : Window
 
     private void OnWindowDragMoved(WindowDrag drag)
     {
-        if (!drag.IsMove || !IsVisible || !IsOnMyMonitor(drag.CursorX, drag.CursorY) || !WindowVault.CanAbsorb(drag.Hwnd))
+        if (!AppSettings.Current.BlackHoleEnabled || !drag.IsMove || !IsVisible || !IsOnMyMonitor(drag.CursorX, drag.CursorY) || !WindowVault.CanAbsorb(drag.Hwnd))
         {
             ExitAttract();
             return;
@@ -694,7 +745,7 @@ public partial class IslandWindow : Window
         bool started = false;
         foreach (var item in _downloads.Items)
             if (_seenDownloads.Add(item.Id) && !item.Complete) started = true;
-        if (started) ShowDownloadStarted();
+        if (started && DownloadsShown && AppSettings.Current.AnimateDownloadStart) ShowDownloadStarted();
         ApplyState(animate: IsLoaded);
     }
 
@@ -705,7 +756,7 @@ public partial class IslandWindow : Window
     private void OnNotificationReceived(NotificationInfo info)
     {
         // Don't interrupt while the user is actively using the island or absorbing a window.
-        if (!IsVisible || _state is State.Open or State.Attract) return;
+        if (!AppSettings.Current.NotificationsInIsland || !IsVisible || _state is State.Open or State.Attract) return;
 
         _shownNotification = info;
         NotifApp.Text = string.IsNullOrWhiteSpace(info.AppName) ? "Notification" : info.AppName;
@@ -731,7 +782,7 @@ public partial class IslandWindow : Window
         SetState(State.Notify);
         // A fresh notification restarts the display timer.
         _notifyTimer.Stop();
-        _notifyTimer.Interval = TimeSpan.FromSeconds(_hovered ? 60 : 5);
+        _notifyTimer.Interval = TimeSpan.FromSeconds(_hovered ? 60 : Math.Clamp(AppSettings.Current.NotificationSeconds, 2, 30));
         _notifyTimer.Start();
     }
 
@@ -912,7 +963,7 @@ public partial class IslandWindow : Window
 
         var fill = new Border
         {
-            Background = new SolidColorBrush(item.Complete ? Color.FromRgb(48, 209, 88) : Colors.White),
+            Background = item.Complete ? new SolidColorBrush(Color.FromRgb(48, 209, 88)) : _uiBrush,
             CornerRadius = new CornerRadius(2),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
@@ -1181,7 +1232,7 @@ public partial class IslandWindow : Window
         if (_state == State.Peek && snapshot == null) _state = State.Closed;
         ApplyState(animate: IsLoaded);
 
-        if (isNewTrack && _state == State.Closed && !_hovered)
+        if (isNewTrack && _state == State.Closed && !_hovered && AppSettings.Current.ShowSongPreview)
         {
             SetState(State.Peek);
             _peekTimer.Stop();
@@ -1345,7 +1396,7 @@ public partial class IslandWindow : Window
                 Width = 22,
                 Height = 22,
                 CornerRadius = new CornerRadius(11),
-                Background = isToday ? _accentBrush : Brushes.Transparent,
+                Background = isToday ? TodayBrush : Brushes.Transparent,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Child = new TextBlock
                 {
@@ -1365,8 +1416,8 @@ public partial class IslandWindow : Window
 
     private void Watchdog()
     {
-        bool fullscreen = NativeMethods.IsExclusiveFullscreenOrPresenting()
-            || NativeMethods.IsFullscreenWindowOn(_monitor.X, _monitor.Y, _monitor.Width, _monitor.Height);
+        bool fullscreen = AppSettings.Current.HideOverFullscreen && (NativeMethods.IsExclusiveFullscreenOrPresenting()
+            || NativeMethods.IsFullscreenWindowOn(_monitor.X, _monitor.Y, _monitor.Width, _monitor.Height));
         if (fullscreen != _fullscreenHidden)
         {
             _fullscreenHidden = fullscreen;

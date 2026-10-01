@@ -16,9 +16,11 @@
     <!-- WFO0003 targets WinForms apps; this is a WPF app that only borrows NotifyIcon. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
 
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Product>Dynamic Island</Product>
-    <Company>Nazim Ferragh</Company>
+    <!-- Shown as the app name in Task Manager and Settings › Apps › Startup. -->
+    <AssemblyTitle>Dynamic Island</AssemblyTitle>
+    <Company>Nazim Abderahman</Company>
     <Description>A Dynamic Island for Windows.</Description>
     <Copyright>Copyright (c) 2026 Nazim Ferragh. MIT License.</Copyright>
   </PropertyGroup>

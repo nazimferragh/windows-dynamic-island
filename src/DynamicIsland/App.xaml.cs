@@ -108,12 +108,26 @@ public partial class App : Application
         }
 
         bool autostart = e.Args.Contains(AutoStartTask.AutostartArg);
+        bool startupEntry = e.Args.Contains(AutoStartTask.StartupEntryArg);
+        bool restart = e.Args.Contains(RestartArg);
         _afterCrash = e.Args.Contains(AfterCrashArg);
-        if (autostart && AutoStartTask.QuitThisBoot())
+        if ((autostart || startupEntry) && (AutoStartTask.QuitThisBoot() || AutoStartTask.DisabledInWindowsStartup()))
         {
-            // The every-minute check, but the user quit the island this session: respect that.
+            // An automatic start, but the user quit the island this session, or turned it off in
+            // Windows' Startup apps: respect that.
             Shutdown();
             return;
+        }
+        if (startupEntry)
+        {
+            // Windows' Startup apps entry: hand off to the task (it starts the island with the rights
+            // the user chose). Nothing to do if the island is already up.
+            if (IslandRunning() || (AutoStartTask.Query() != null && AutoStartTask.RunNow()))
+            {
+                Shutdown();
+                return;
+            }
+            autostart = true; // no task: start it here
         }
         if (!autostart && !_afterCrash) AutoStartTask.ForgetQuit(); // opened by hand: it's wanted again
 
@@ -121,7 +135,8 @@ public partial class App : Application
         try
         {
             _mutex = new Mutex(false, MutexName);
-            _ownsMutex = _mutex.WaitOne(_afterCrash ? TimeSpan.FromSeconds(10) : TimeSpan.Zero);
+            // After a crash or a restart from Settings, the previous instance may still be exiting.
+            _ownsMutex = _mutex.WaitOne(_afterCrash || restart ? TimeSpan.FromSeconds(10) : TimeSpan.Zero);
         }
         catch (AbandonedMutexException)
         {
@@ -133,6 +148,14 @@ public partial class App : Application
         }
         if (!_ownsMutex)
         {
+            // Opened by hand while it's already running: show its Settings, the way launching a
+            // running app brings up its window. (Through the registry: the running island may have
+            // higher rights than this launch.)
+            if (!autostart && !_afterCrash && !restart)
+            {
+                Guardian.RequestOpenSettings();
+                AllowSetForegroundWindow(-1); // let the running island bring its window to the front
+            }
             Shutdown();
             return;
         }
@@ -164,6 +187,7 @@ public partial class App : Application
         // An installer asking the island to stop (it may lack the rights to end a high-priority one).
         _quitRequestCheck.Tick += (_, _) =>
         {
+            if (Guardian.TakeOpenSettingsRequest()) OpenSettings();
             if (!Guardian.QuitRequested()) return;
             Log.Info("Quit requested by the installer");
             Guardian.SignalQuit();
@@ -180,6 +204,9 @@ public partial class App : Application
         _downloads = new DownloadWatcher();
         _notifications = new NotificationService();
         _pins = new PinnedApps();
+        _ = WindowsTheme.Current; // start listening for accent/light-dark changes
+        AppSettings.Changed += OnSettingsChanged;
+        _lastAllMonitors = AppSettings.Current.ShowOnAllMonitors;
         SessionEnding += (_, _) =>
         {
             Guardian.SignalQuit(); // signing out or shutting down isn't a crash
@@ -235,7 +262,10 @@ public partial class App : Application
         foreach (var island in _islands) island.Close();
         _islands.Clear();
 
-        foreach (var screen in Forms.Screen.AllScreens)
+        var screens = AppSettings.Current.ShowOnAllMonitors
+            ? Forms.Screen.AllScreens
+            : Forms.Screen.AllScreens.Where(s => s.Primary).ToArray();
+        foreach (var screen in screens)
         {
             var b = screen.Bounds;
             var island = new IslandWindow(_media!, _vault!, _dragWatcher!, _downloads!, _notifications!, _pins!, new Int32Rect(b.X, b.Y, b.Width, b.Height)) { UserHidden = _hidden };
@@ -271,6 +301,7 @@ public partial class App : Application
 
     private void AbsorbForegroundWindow()
     {
+        if (!AppSettings.Current.AbsorbShortcutEnabled || !AppSettings.Current.BlackHoleEnabled) return;
         var hwnd = WindowApi.GetForegroundWindow();
         if (!WindowVault.CanAbsorb(hwnd) || _hidden) return;
         var r = WindowApi.GetVisibleBounds(hwnd);
@@ -293,6 +324,11 @@ public partial class App : Application
         menu.Items.Add(new Forms.ToolStripMenuItem($"Dynamic Island {VersionText}") { Enabled = false });
         menu.Items.Add(new Forms.ToolStripSeparator());
 
+        var settings = new Forms.ToolStripMenuItem("Settings…");
+        settings.Font = new Drawing.Font(settings.Font, Drawing.FontStyle.Bold);
+        settings.Click += (_, _) => OpenSettings();
+        menu.Items.Add(settings);
+
         var hide = new Forms.ToolStripMenuItem("Hide island") { CheckOnClick = true };
         hide.CheckedChanged += (_, _) => SetHidden(hide.Checked);
         menu.Items.Add(hide);
@@ -307,14 +343,7 @@ public partial class App : Application
 
         menu.Items.Add(new Forms.ToolStripSeparator());
         var quit = new Forms.ToolStripMenuItem("Quit Dynamic Island");
-        quit.Click += (_, _) =>
-        {
-            // Tell the watchdog (and the every-minute task) this is on purpose; the island comes back
-            // at the next restart, or when it's opened again.
-            AutoStartTask.RememberQuit();
-            Guardian.SignalQuit();
-            Shutdown();
-        };
+        quit.Click += (_, _) => QuitIsland();
         menu.Items.Add(quit);
 
         var iconStream = GetResourceStream(new Uri("pack://application:,,,/Assets/icon.ico")).Stream;
@@ -329,6 +358,68 @@ public partial class App : Application
         {
             if (args.Button == Forms.MouseButtons.Left) hide.Checked = !hide.Checked;
         };
+    }
+
+    private const string RestartArg = "--restart";
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool AllowSetForegroundWindow(int processId);
+    private bool _lastAllMonitors;
+
+    public void OpenSettings()
+    {
+        var primary = Forms.Screen.PrimaryScreen!.Bounds;
+        Overlays.SettingsWindow.ShowSingle(new Overlays.SettingsContext(
+            _pins!,
+            new Int32Rect(primary.X, primary.Y, primary.Width, primary.Height),
+            Restart: RestartIsland,
+            Quit: QuitIsland));
+    }
+
+    /// <summary>Quit for good (tray Quit, Settings › About › Quit).</summary>
+    public void QuitIsland()
+    {
+        // Tell the watchdog (and the every-minute task) this is on purpose; the island comes back
+        // at the next restart, or when it's opened again.
+        AutoStartTask.RememberQuit();
+        Guardian.SignalQuit();
+        Shutdown();
+    }
+
+    /// <summary>Restart now (e.g. after changing the startup priority): a new instance takes over once this one exits.</summary>
+    private void RestartIsland()
+    {
+        if (Environment.ProcessPath is not { } path) return;
+        Guardian.SignalQuit();
+        Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c start \"\" \"{path}\" {RestartArg}") { UseShellExecute = false, CreateNoWindow = true })?.Dispose();
+        Shutdown();
+    }
+
+    private static bool IslandRunning()
+    {
+        try
+        {
+            if (!Mutex.TryOpenExisting(MutexName, out var existing)) return false;
+            existing.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true; // held by a high-priority island
+        }
+    }
+
+    private void OnSettingsChanged()
+    {
+        var s = AppSettings.Current;
+        if (s.ShowOnAllMonitors != _lastAllMonitors)
+        {
+            _lastAllMonitors = s.ShowOnAllMonitors;
+            CreateIslands();
+        }
+        // Never leave the user without notifications: banners are hidden only while the island shows them.
+        if (s.ShouldHideBanners) NotificationBanners.HideAll();
+        else NotificationBanners.RestoreAll();
     }
 
     private static bool HighPriorityChosen()

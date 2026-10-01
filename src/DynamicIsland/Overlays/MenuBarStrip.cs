@@ -155,6 +155,13 @@ internal sealed class MenuBarStrip : Window
         return IntPtr.Zero;
     }
 
+    /// <summary>
+    /// The strip's fill while a maximized window is on screen: black in dark mode; in light mode it
+    /// follows Windows (like the light taskbar), so the black island stands out the way a Mac notch does.
+    /// </summary>
+    public void SetLight(bool light) =>
+        _fill.Background = light ? new SolidColorBrush(Color.FromRgb(0xF3, 0xF3, 0xF3)) : Brushes.Black;
+
     private void SetBlack(bool black)
     {
         if (_black == black) return;

@@ -53,11 +53,11 @@ public sealed class NotificationService
                 return;
             }
             // Only now that the island can read them is it safe to silence Windows' own pop-ups.
-            NotificationBanners.HideAll();
+            if (AppSettings.Current.ShouldHideBanners) NotificationBanners.HideAll();
             _poll.Tick += async (_, _) =>
             {
                 // Apps that start sending notifications later get their pop-ups turned off too.
-                if (++_pollCount % 10 == 0) NotificationBanners.HideAll();
+                if (++_pollCount % 10 == 0 && AppSettings.Current.ShouldHideBanners) NotificationBanners.HideAll();
                 await PollAsync();
             };
             _poll.Start();
@@ -96,7 +96,7 @@ public sealed class NotificationService
 
         foreach (var n in fresh)
         {
-            try { NotificationBanners.Hide(n.AppInfo?.AppUserModelId ?? ""); } catch { }
+            try { if (AppSettings.Current.ShouldHideBanners) NotificationBanners.Hide(n.AppInfo?.AppUserModelId ?? ""); } catch { }
             var info = Parse(n);
             if (info == null) continue;
             info.Icon = await LoadIconAsync(n);

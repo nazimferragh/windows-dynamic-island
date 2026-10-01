@@ -322,6 +322,12 @@
                     </Border>
                     <Border Width="1.5" Height="4" CornerRadius="0,1,1,0" Background="#73FFFFFF" VerticalAlignment="Center" Margin="1,0,0,0" />
                 </StackPanel>
+                <!-- Settings (same as the tray's Settings…). -->
+                <Button x:Name="GearButton" Style="{StaticResource TransportButton}" Width="28" Height="28" Margin="0,0,2,0"
+                        Click="GearButton_Click" ToolTip="Settings">
+                    <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13"
+                               Foreground="{StaticResource SecondaryText}" />
+                </Button>
                 <!-- Pinned apps: swaps the player for a row of the user's favorite apps. -->
                 <Button x:Name="AppsButton" Style="{StaticResource TransportButton}" Width="28" Height="28" Margin="0"
                         Click="AppsButton_Click" ToolTip="Pinned apps">

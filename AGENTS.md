@@ -50,6 +50,14 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   - Known limit: in high priority the island runs elevated, so Windows blocks drag-and-drop from
     Explorer onto it (pinning via the "+" picker still works). Don't "fix" this by relaxing
     Windows' message filtering (UIPI); that lowers a security boundary.
+- **Feels native.** `WindowsTheme` reads the accent color (`UISettings`: the taskbar/Start accent,
+  not the DWM title-bar one) and light/dark mode, live. `AppSettings` + `SettingsWindow` (Windows 11
+  Settings look, Mica on 22621+, solid on Windows 10) control every feature, applied instantly.
+  Opening the app again while it runs opens Settings. A Run entry (`--startup-entry`) lists the
+  island in Settings › Apps › Startup / Task Manager; it only hands off to the task, and every
+  automatic start honors that switch (`AutoStartTask.DisabledInWindowsStartup`).
+- High-priority islands run elevated: tests that inject clicks from a normal-rights process can't
+  click them (Windows UIPI). Test with an elevated helper or the open-settings-on-relaunch path.
 - Animations must be smooth (driven per frame or with easing; no janky jumps or Windows'
   own snap previews over the island).
 

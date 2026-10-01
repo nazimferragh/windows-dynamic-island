@@ -33,8 +33,8 @@ public sealed class DownloadWatcher : IDisposable
     private static readonly string[] PartialExtensions =
         { ".crdownload", ".part", ".partial", ".download", ".opdownload" };
 
-    /// <summary>Finished downloads stay listed this long, so there's time to click them.</summary>
-    private static readonly TimeSpan KeepCompleted = TimeSpan.FromMinutes(3);
+    /// <summary>Finished downloads stay listed this long (Settings › Downloads), so there's time to click them.</summary>
+    private static TimeSpan KeepCompleted => TimeSpan.FromMinutes(Math.Max(1, AppSettings.Current.KeepFinishedDownloadsMinutes));
 
     public static DownloadWatcher? Instance { get; private set; }
 
