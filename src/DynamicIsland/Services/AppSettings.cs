@@ -17,7 +17,8 @@ public sealed class AppSettings
     // General
     public bool ShowOnAllMonitors { get; set; } = true;
     public int HoverDelayMs { get; set; } = 120;
-    public bool HideOverFullscreen { get; set; } = true;
+    /// <summary>Off by default: the island stays visible over full-screen games and videos (kept light by <see cref="GameMode"/>).</summary>
+    public bool HideInFullscreenApps { get; set; }
     public bool MatchWindowsColors { get; set; } = true;
 
     // Now playing

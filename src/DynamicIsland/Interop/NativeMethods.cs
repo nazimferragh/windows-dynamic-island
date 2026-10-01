@@ -85,6 +85,22 @@ internal static class NativeMethods
     public static void BringToTopmost(IntPtr hwnd) =>
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+
+    /// <summary>
+    /// True when the window in front (e.g. a game that made itself topmost) sits above this one.
+    /// Only walks the few windows stacked above us, so it's cheap enough to run while gaming.
+    /// </summary>
+    public static bool IsCoveredByForeground(IntPtr hwnd)
+    {
+        var front = GetForegroundWindow();
+        if (front == IntPtr.Zero || front == hwnd) return false;
+        var above = GetWindow(hwnd, 3 /* GW_HWNDPREV */);
+        for (int i = 0; i < 256 && above != IntPtr.Zero; i++, above = GetWindow(above, 3))
+            if (above == front) return true;
+        return false;
+    }
+
     /// <summary>Exclusive-fullscreen games and presentation mode (affects every monitor).</summary>
     public static bool IsExclusiveFullscreenOrPresenting()
     {

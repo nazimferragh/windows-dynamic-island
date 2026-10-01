@@ -11,7 +11,7 @@ public sealed record SnapCell(double X, double Y, double W, double H, string Nam
 }
 
 /// <summary>
-/// Places a window in a snap zone of a monitor's usable area (below the island's strip, above the
+/// Places a window in a snap zone of a monitor's usable area (the island floats over its top, above the
 /// taskbar). Works the same on Windows 10 and 11, which lets Windows 10 have snap layouts at all.
 /// </summary>
 public static class WindowSnapper

@@ -87,7 +87,16 @@
           MouseLeftButtonUp="Notch_MouseLeftButtonUp"
           AllowDrop="True" DragEnter="Notch_DragEnter" DragOver="Notch_DragOver" DragLeave="Notch_DragLeave" Drop="Notch_Drop">
 
-        <Path x:Name="NotchShape" Fill="Black" />
+        <!-- The hairline rim keeps the black island visible over dark apps (a dark title bar, a
+             game): invisible where it meets the screen edge, faintly lit along the bottom. -->
+        <Path x:Name="NotchShape" Fill="Black" StrokeThickness="1">
+            <Path.Stroke>
+                <LinearGradientBrush MappingMode="Absolute" StartPoint="0,4" EndPoint="0,32">
+                    <GradientStop Color="#00FFFFFF" Offset="0" />
+                    <GradientStop Color="#40FFFFFF" Offset="1" />
+                </LinearGradientBrush>
+            </Path.Stroke>
+        </Path>
 
         <!-- Under the island while a dragged window is over it: letting go eats it. -->
         <Border x:Name="DropHint" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,42,0,0"

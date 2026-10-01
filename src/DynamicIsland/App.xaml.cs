@@ -520,7 +520,7 @@ public partial class App : Application
     {
         Log.Error("Fatal exception", e.ExceptionObject as Exception);
 
-        // Never leave absorbed windows stranded, or the top strip reserved.
+        // Never leave absorbed windows stranded.
         try
         {
             _vault?.RestoreAll();
@@ -528,7 +528,6 @@ public partial class App : Application
             foreach (var island in _islands)
             {
                 island.ReleaseCursor();
-                island.ReleaseReservedSpace();
             }
         }
         catch

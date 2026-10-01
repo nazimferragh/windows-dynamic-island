@@ -62,7 +62,7 @@ public partial class IslandWindow : Window
     private readonly NotificationService _notifications;
     private readonly PinnedApps _pins;
     private readonly Int32Rect _monitor; // physical pixels
-    private readonly MenuBarStrip _strip;
+    private readonly TopEdge _edge;
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
     /// <summary>Sliders, today's date, download bar: the Windows accent (Settings › Match Windows colors), else white.</summary>
     private readonly SolidColorBrush _uiBrush = new(Colors.White);
@@ -123,21 +123,8 @@ public partial class IslandWindow : Window
         _notifications = notifications;
         _monitor = monitorBounds;
 
-        // The menu-bar strip goes up first so the island always stacks above it.
-        _strip = new MenuBarStrip(monitorBounds);
-        _strip.FullscreenAppChanged += () =>
-        {
-            Watchdog();
-            // The fullscreen window may still be settling into its final size; check again shortly.
-            Dispatcher.InvokeAsync(async () =>
-            {
-                await System.Threading.Tasks.Task.Delay(400);
-                Watchdog();
-            });
-        };
-        _strip.PositionChanged += PositionOnMonitor;
-        _strip.Show();
-        _strip.Reserve();
+        _edge = new TopEdge(monitorBounds);
+        _edge.Changed += PositionOnMonitor;
 
         ClosedEq.BarBrush = _accentBrush;
         OpenEq.BarBrush = _accentBrush;
@@ -200,7 +187,6 @@ public partial class IslandWindow : Window
             _watchdogTimer.Stop();
             _ghost?.Close();
             ReleaseCursor();
-            _strip.Close();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
         SourceInitialized += OnSourceInitialized;
@@ -244,7 +230,6 @@ public partial class IslandWindow : Window
         Brush bars = match ? _uiBrush : _accentBrush;
         ClosedEq.BarBrush = bars;
         OpenEq.BarBrush = bars;
-        _strip.SetLight(match && theme.SystemLight);
 
         _openTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(s.HoverDelayMs, 50, 2000));
         AppsButton.Visibility = s.PinnedAppsEnabled ? Visibility.Visible : Visibility.Collapsed;
@@ -317,14 +302,14 @@ public partial class IslandWindow : Window
         NativeMethods.PlaceTopmost(_hwnd, r.Left, r.Top, r.Width, r.Height);
     }
 
-    /// <summary>Top middle of this monitor (below the menu-bar strip), physical pixels.</summary>
+    /// <summary>Top middle of this monitor, physical pixels.</summary>
     private WindowApi.RECT ExpectedBounds()
     {
         var dpi = VisualTreeHelper.GetDpi(this);
         int w = (int)Math.Round(Width * dpi.DpiScaleX);
         int h = (int)Math.Round(Height * dpi.DpiScaleY);
         int x = _monitor.X + (_monitor.Width - w) / 2;
-        return new WindowApi.RECT { Left = x, Top = _strip.ReservedTop, Right = x + w, Bottom = _strip.ReservedTop + h };
+        return new WindowApi.RECT { Left = x, Top = _edge.Top, Right = x + w, Bottom = _edge.Top + h };
     }
 
     /// <summary>Puts the island back in the top middle if anything (a DPI change, Explorer, another app) moved it.</summary>
@@ -347,7 +332,7 @@ public partial class IslandWindow : Window
     private (double Dx, double Dy) FromNotch(int x, int y)
     {
         double s = DpiScale;
-        return ((x - (_monitor.X + _monitor.Width / 2.0)) / s, (y - _strip.ReservedTop) / s);
+        return ((x - (_monitor.X + _monitor.Width / 2.0)) / s, (y - _edge.Top) / s);
     }
 
     // ---------------------------------------------------------------- state
@@ -408,7 +393,7 @@ public partial class IslandWindow : Window
     {
         double s = DpiScale;
         double w = Math.Max(_width.Value, 40) * s, h = Math.Max(_height.Value, 16) * s;
-        return new Rect(_monitor.X + _monitor.Width / 2.0 - w / 2, _strip.ReservedTop, w, h);
+        return new Rect(_monitor.X + _monitor.Width / 2.0 - w / 2, _edge.Top, w, h);
     }
 
     private void ApplyState(bool animate)
@@ -883,7 +868,7 @@ public partial class IslandWindow : Window
 
     private void HoldCursorBelowStrip()
     {
-        int top = _strip.ReservedBottom > _monitor.Y ? _strip.ReservedBottom : _monitor.Y + (int)Math.Round(40 * DpiScale);
+        int top = _edge.Top + (int)Math.Round(32 * DpiScale);
         // Windows 11 starts its maximize preview a little before the actual edge, hence the margin.
         CursorFence.Raise(_monitor.X, _monitor.X + _monitor.Width, top + (int)Math.Round(28 * DpiScale));
         _cursorHeld = true;
@@ -1506,7 +1491,7 @@ public partial class IslandWindow : Window
     /// <summary>The point windows fall into and come out of, as a tiny rect (physical pixels).</summary>
     private WindowApi.RECT NotchMouth(double s)
     {
-        int x = _monitor.X + _monitor.Width / 2, y = _strip.ReservedTop + (int)(18 * s);
+        int x = _monitor.X + _monitor.Width / 2, y = _edge.Top + (int)(18 * s);
         return new WindowApi.RECT { Left = x, Top = y, Right = x + 1, Bottom = y + 1 };
     }
 
@@ -1714,17 +1699,21 @@ public partial class IslandWindow : Window
 
     private void Watchdog()
     {
-        // Only the island on the full-screen app's own screen steps aside; the others stay.
-        bool fullscreen = AppSettings.Current.HideOverFullscreen && GameMode.IsOn(_monitor);
+        // The island stays over full-screen games and videos (like on an iPhone), unless the user
+        // chose to hide it there; then only the island on that app's own screen steps aside.
+        bool fullscreen = AppSettings.Current.HideInFullscreenApps && GameMode.IsOn(_monitor);
         if (fullscreen != _fullscreenHidden)
         {
             _fullscreenHidden = fullscreen;
             UpdateVisibility();
         }
 
-        // Other always-on-top windows can end up above us; quietly reclaim the top spot.
-        // (Not while a game runs: re-ordering topmost windows every second can hitch its frames.)
-        if (IsVisible && _hwnd != IntPtr.Zero && !GameMode.Active) NativeMethods.BringToTopmost(_hwnd);
+        // Other always-on-top windows can end up above us; quietly reclaim the top spot. While a
+        // game runs, only when the game really got above us: re-ordering topmost windows every
+        // second can hitch its frames, a cheap z-order check can't.
+        if (IsVisible && _hwnd != IntPtr.Zero && (!GameMode.Active || NativeMethods.IsCoveredByForeground(_hwnd)))
+            NativeMethods.BringToTopmost(_hwnd);
+        if (IsVisible) _edge.Refresh();
         if (IsVisible) KeepCentered();
     }
 
@@ -1739,22 +1728,13 @@ public partial class IslandWindow : Window
         bool show = !_userHidden && !_fullscreenHidden;
         if (show)
         {
-            if (!_strip.IsVisible) _strip.Show();
             if (!IsVisible) Show();
         }
         else
         {
             if (IsVisible) Hide();
-            if (_strip.IsVisible) _strip.Hide();
         }
-
-        // Fullscreen apps ignore the reserved strip anyway; only give the space back when the user hides the island.
-        if (_userHidden) _strip.Release();
-        else _strip.Reserve();
     }
-
-    /// <summary>Gives the reserved top strip back to other windows (on exit or crash).</summary>
-    public void ReleaseReservedSpace() => _strip.Release();
 
     // ---------------------------------------------------------------- input
 

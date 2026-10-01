@@ -346,7 +346,7 @@ internal sealed class SettingsWindow : Window
             s.ShowOnAllMonitors ? 1 : 0, v => AppSettings.Update(x => x.ShowOnAllMonitors = v == 1));
         Choice("Open on hover after", "How long the pointer rests on the island before it expands",
             new[] { ("Instant", 60), ("0.1 s", 120), ("0.2 s", 220), ("0.4 s", 400) }, s.HoverDelayMs, v => AppSettings.Update(x => x.HoverDelayMs = v));
-        Toggle("Hide over full-screen apps", "Games, videos and presentations in full screen", s.HideOverFullscreen, v => AppSettings.Update(x => x.HideOverFullscreen = v));
+        Toggle("Hide over full-screen apps", "Off: the island stays on top of games and videos, kept light so they run smoothly", s.HideInFullscreenApps, v => AppSettings.Update(x => x.HideInFullscreenApps = v));
         Toggle("Match Windows colors", "Use your accent color and follow light or dark mode, like the taskbar", s.MatchWindowsColors, v => AppSettings.Update(x => x.MatchWindowsColors = v));
     }
 
