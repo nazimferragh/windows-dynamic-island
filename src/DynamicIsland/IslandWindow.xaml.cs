@@ -13,6 +13,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using DynamicIsland.Controls;
 using DynamicIsland.Interop;
 using DynamicIsland.Overlays;
 using DynamicIsland.Services;
@@ -210,6 +211,9 @@ public partial class IslandWindow : Window
         RebuildDownloads();
         RebuildApps();
         BuildSnapTiles();
+        RebuildStatus();
+        SystemStatus.Current.Changed += RebuildStatus;
+        Closed += (_, _) => SystemStatus.Current.Changed -= RebuildStatus;
         ApplyAppearance();
         ApplyState(animate: false);
     }
@@ -231,6 +235,7 @@ public partial class IslandWindow : Window
         _openTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(s.HoverDelayMs, 50, 2000));
         AppsButton.Visibility = s.PinnedAppsEnabled ? Visibility.Visible : Visibility.Collapsed;
         if (!s.PinnedAppsEnabled) _appsView = false;
+        RebuildStatus();
         if (!s.BlackHoleEnabled && !s.SnapLayoutsEnabled) ExitAttract();
         DropHole.Opacity = s.BlackHoleEnabled ? 1 : 0.25;
 
@@ -336,7 +341,11 @@ public partial class IslandWindow : Window
     {
         if (_state == state) return;
         _state = state;
-        if (state != State.Open) _appsView = false; // next time it opens on the player
+        if (state != State.Open)
+        {
+            _appsView = false; // next time it opens on the player
+            _wifiView = false;
+        }
         ApplyState(animate: true);
     }
 
@@ -407,8 +416,9 @@ public partial class IslandWindow : Window
         Reveal(DropPanelContent, _state == State.Attract && _snapPanel, animate);
         if (_snapPanel) DropLabel.Text = DropLabelText();
         Reveal(OpenContent, _state == State.Open, animate);
-        PlayerGrid.Visibility = _appsView ? Visibility.Collapsed : Visibility.Visible;
+        PlayerGrid.Visibility = _appsView || _wifiView ? Visibility.Collapsed : Visibility.Visible;
         AppsGrid.Visibility = _appsView ? Visibility.Visible : Visibility.Collapsed;
+        WifiGrid.Visibility = _wifiView ? Visibility.Visible : Visibility.Collapsed;
         AppsGlyphPath.Fill = _appsView ? Brushes.White : (Brush)FindResource("SecondaryText");
         DownloadsSection.Visibility = _state == State.Open && DownloadsShown && _downloads.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ShelfSection.Visibility = _state == State.Open && _visibleItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -700,6 +710,8 @@ public partial class IslandWindow : Window
     private Border? _snapCellElement;
     private SnapPreview? _preview;
     private readonly List<Border> _snapCells = new();
+    /// <summary>For each zone, all the zones of its layout (to fill the rest after a drop).</summary>
+    private readonly Dictionary<SnapCell, SnapCell[]> _snapLayouts = new();
 
     /// <summary>Layout tiles: column widths, row heights, and each zone's (column, row, column span, row span).</summary>
     private sealed record SnapTile(string Name, double[] Cols, double[] Rows, (int C, int R, int CS, int RS, SnapCell Cell)[] Zones);
@@ -793,7 +805,9 @@ public partial class IslandWindow : Window
                 foreach (var (col, row, cs, rs, landscapeCell) in tile.Zones)
                 {
                     var cell = portrait ? Transpose(landscapeCell) : landscapeCell;
+                    var layout = tile.Zones.Select(z => portrait ? Transpose(z.Cell) : z.Cell).ToArray();
                     var zone = new Border { CornerRadius = new CornerRadius(3), Background = SnapCellBrush, Margin = new Thickness(1.5), Tag = cell };
+                    _snapLayouts[cell] = layout;
                     Grid.SetColumn(zone, portrait ? row : col);
                     Grid.SetRow(zone, portrait ? col : row);
                     Grid.SetColumnSpan(zone, portrait ? rs : cs);
@@ -909,6 +923,30 @@ public partial class IslandWindow : Window
         }
         _height.Kick(160);
         StartShapeAnimation();
+
+        // Fill the rest of the layout with the most recently used windows on this monitor, so the
+        // screen is arranged in one move (like picking from Windows' Snap Assist, but automatic).
+        if (!AppSettings.Current.SnapAutoFill || cell.IsFullScreen || !_snapLayouts.TryGetValue(cell, out var layout)) return;
+        var others = layout.Where(z => !ReferenceEquals(z, cell)).ToArray();
+        var windows = RecentWindowsOnMyMonitor(hwnd, others.Length);
+        for (int i = 0; i < windows.Count; i++) WindowSnapper.Snap(windows[i], work, others[i]);
+        WindowApi.RaiseTopmost(_hwnd);
+    }
+
+    /// <summary>The most recently used normal windows on this monitor (z-order), excluding one.</summary>
+    private List<IntPtr> RecentWindowsOnMyMonitor(IntPtr except, int count)
+    {
+        var found = new List<IntPtr>();
+        foreach (var w in WindowApi.TopLevelWindowsInZOrder())
+        {
+            if (found.Count >= count) break;
+            if (w == except || !WindowVault.CanAbsorb(w) || WindowApi.IsMinimized(w) || WindowApi.IsCloaked(w)) continue;
+            if (string.IsNullOrWhiteSpace(WindowApi.GetTitle(w))) continue;
+            var r = WindowApi.GetVisibleBounds(w);
+            if (!IsOnMyMonitor(r.Left + r.Width / 2, r.Top + r.Height / 2)) continue;
+            found.Add(w);
+        }
+        return found;
     }
 
     private bool _cursorHeld;
@@ -1786,7 +1824,253 @@ public partial class IslandWindow : Window
     private void AppsButton_Click(object sender, RoutedEventArgs e)
     {
         _appsView = !_appsView;
+        _wifiView = false;
         ApplyState(animate: true);
+    }
+
+    // ---------------------------------------------------------------- status icons (top row)
+
+    private void RebuildStatus()
+    {
+        var s = AppSettings.Current;
+        var st = SystemStatus.Current;
+        var fg = (Brush)FindResource("SecondaryText");
+        StatusPanel.Children.Clear();
+
+        if (s.StatusBluetooth && st.HasBluetooth)
+            AddStatus(StatusIcons.Bluetooth(Brushes.White, st.BluetoothOn), st.BluetoothOn ? "Bluetooth: on" : "Bluetooth: off",
+                () => OpenUri("ms-settings:bluetooth"));
+
+        if (s.StatusWifi)
+        {
+            FrameworkElement icon = st.Network switch
+            {
+                NetworkKind.Wifi => StatusIcons.Wifi(Brushes.White, st.WifiLevel, offline: false),
+                NetworkKind.Wired or NetworkKind.Cellular => StatusIcons.Ethernet(Brushes.White),
+                _ => StatusIcons.Wifi(Brushes.White, 0, offline: true),
+            };
+            string tip = st.Network switch
+            {
+                NetworkKind.Wifi => $"Wi‑Fi: {st.NetworkName}",
+                NetworkKind.Wired => $"Wired network: {st.NetworkName}",
+                NetworkKind.Cellular => $"Mobile network: {st.NetworkName}",
+                _ => "Not connected",
+            };
+            AddStatus(icon, tip, ToggleWifiView);
+        }
+
+        if (s.StatusBattery && st.HasBattery)
+        {
+            var battery = new StackPanel { Orientation = Orientation.Horizontal };
+            if (s.StatusBatteryPercent)
+                battery.Children.Add(new TextBlock
+                {
+                    Text = $"{st.BatteryPercent}%",
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Brushes.White,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 5, 0),
+                });
+            battery.Children.Add(StatusIcons.Battery(Brushes.White, st.BatteryPercent, st.Charging, st.PluggedIn));
+            string tip = st.Charging ? $"Charging · {st.BatteryPercent}%"
+                : st.PluggedIn ? $"Plugged in · {st.BatteryPercent}%"
+                : st.TimeLeft is { } left ? $"On battery · about {(int)left.TotalHours} h {left.Minutes} min left"
+                : $"On battery · {st.BatteryPercent}%";
+            AddStatus(battery, tip, () => OpenUri("ms-settings:batterysaver"));
+        }
+        _ = fg;
+    }
+
+    private void AddStatus(FrameworkElement content, string tip, Action click)
+    {
+        content.VerticalAlignment = VerticalAlignment.Center;
+        var style = new Style(typeof(Border));
+        style.Setters.Add(new Setter(Border.BackgroundProperty, Brushes.Transparent));
+        var hovered = new Trigger { Property = IsMouseOverProperty, Value = true };
+        hovered.Setters.Add(new Setter(Border.BackgroundProperty, Frozen(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF))));
+        style.Triggers.Add(hovered);
+        var item = new Border
+        {
+            Height = 26,
+            Padding = new Thickness(6, 0, 6, 0),
+            CornerRadius = new CornerRadius(7),
+            Style = style,
+            Cursor = Cursors.Hand,
+            ToolTip = tip,
+            Child = content,
+        };
+        item.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            click();
+        };
+        StatusPanel.Children.Add(item);
+    }
+
+    private static void OpenUri(string uri)
+    {
+        try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true })?.Dispose(); }
+        catch (Exception ex) { Log.Error($"Couldn't open {uri}", ex); }
+    }
+
+    // ---------------------------------------------------------------- Wi‑Fi view
+
+    private bool _wifiView;
+    private int _wifiScanVersion;
+
+    private void ToggleWifiView()
+    {
+        _wifiView = !_wifiView;
+        _appsView = false;
+        ApplyState(animate: true);
+        if (_wifiView) _ = RefreshWifiAsync();
+    }
+
+    private async System.Threading.Tasks.Task RefreshWifiAsync()
+    {
+        int version = ++_wifiScanVersion;
+        WifiStatus.Text = "Looking for networks…";
+        RenderWifiSwitch();
+        if (!await WifiService.InitAsync())
+        {
+            WifiList.Children.Clear();
+            WifiStatus.Text = "This PC has no Wi‑Fi, or Windows didn't allow access to it.";
+            return;
+        }
+        RenderWifiSwitch();
+        if (!WifiService.RadioOn)
+        {
+            WifiList.Children.Clear();
+            WifiStatus.Text = "Wi‑Fi is off.";
+            return;
+        }
+        var networks = await WifiService.ScanAsync();
+        if (version != _wifiScanVersion || !_wifiView) return;
+        WifiList.Children.Clear();
+        foreach (var n in networks) WifiList.Children.Add(CreateWifiRow(n));
+        WifiStatus.Text = WifiService.NamesHidden
+            ? "Windows hides network names until location access is on (Settings › Privacy › Location)."
+            : networks.Count == 0 ? "No networks found." : $"{networks.Count} networks nearby";
+    }
+
+    private void RenderWifiSwitch()
+    {
+        bool on = WifiService.RadioOn;
+        WifiSwitch.Background = on ? _uiBrush : Frozen(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+        WifiSwitchKnob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        WifiSwitchKnob.Fill = on && AppSettings.Current.MatchWindowsColors ? Brushes.Black : Brushes.White;
+    }
+
+    private async void WifiSwitch_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        await WifiService.SetRadioAsync(!WifiService.RadioOn);
+        await System.Threading.Tasks.Task.Delay(700);
+        await RefreshWifiAsync();
+    }
+
+    private void WifiSettings_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        CloseAfterAction();
+        OpenUri(WifiService.NamesHidden ? "ms-settings:privacy-location" : "ms-settings:network-wifi");
+    }
+
+    private void WifiScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        WifiScroll.ScrollToVerticalOffset(WifiScroll.VerticalOffset - e.Delta / 3.0);
+        e.Handled = true;
+    }
+
+    private FrameworkElement CreateWifiRow(WifiNetwork n)
+    {
+        int level = n.Bars >= 4 ? 3 : n.Bars >= 2 ? 2 : 1;
+        var grid = new Grid { Height = 30 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icon = StatusIcons.Wifi(Brushes.White, level, offline: false);
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(icon);
+
+        var name = new TextBlock
+        {
+            Text = n.Ssid,
+            FontSize = 12.5,
+            FontWeight = n.Connected ? FontWeights.SemiBold : FontWeights.Normal,
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        Grid.SetColumn(name, 1);
+        grid.Children.Add(name);
+
+        var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (n.Secured)
+            right.Children.Add(new System.Windows.Shapes.Path
+            {
+                // padlock
+                Data = Geometry.Parse("M 3,6 V 4.5 A 3,3 0 0 1 9,4.5 V 6 M 1.5,6 H 10.5 A 1,1 0 0 1 11.5,7 V 12 A 1,1 0 0 1 10.5,13 H 1.5 A 1,1 0 0 1 0.5,12 V 7 A 1,1 0 0 1 1.5,6 Z"),
+                Stroke = (Brush)FindResource("SecondaryText"),
+                StrokeThickness = 1.2,
+                Width = 12,
+                Height = 14,
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        var action = new TextBlock
+        {
+            FontSize = 11.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = n.Connected ? _uiBrush : (Brush)FindResource("SecondaryText"),
+            Text = n.Connected ? "Connected" : "",
+            MinWidth = 70,
+            TextAlignment = TextAlignment.Right,
+        };
+        right.Children.Add(action);
+        Grid.SetColumn(right, 2);
+        grid.Children.Add(right);
+
+        var style = new Style(typeof(Border));
+        style.Setters.Add(new Setter(Border.BackgroundProperty, Brushes.Transparent));
+        var hovered = new Trigger { Property = IsMouseOverProperty, Value = true };
+        hovered.Setters.Add(new Setter(Border.BackgroundProperty, Frozen(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF))));
+        style.Triggers.Add(hovered);
+        var row = new Border { Style = style, CornerRadius = new CornerRadius(7), Padding = new Thickness(6, 0, 8, 0), Cursor = Cursors.Hand, Child = grid };
+        row.MouseEnter += (_, _) => action.Text = n.Connected ? "Disconnect" : "Join";
+        row.MouseLeave += (_, _) => action.Text = n.Connected ? "Connected" : "";
+        row.MouseLeftButtonUp += async (_, e) =>
+        {
+            e.Handled = true;
+            if (n.Connected)
+            {
+                WifiService.Disconnect();
+                WifiStatus.Text = $"Disconnected from {n.Ssid}";
+                await System.Threading.Tasks.Task.Delay(800);
+                await RefreshWifiAsync();
+                return;
+            }
+            action.Text = "Joining…";
+            var result = await WifiService.JoinAsync(n);
+            switch (result)
+            {
+                case WifiJoinResult.Joined:
+                    WifiStatus.Text = $"Connected to {n.Ssid}";
+                    await RefreshWifiAsync();
+                    break;
+                case WifiJoinResult.NeedsPassword:
+                    CloseAfterAction();
+                    WifiPasswordWindow.ShowFor(n, _monitor);
+                    break;
+                default:
+                    action.Text = "";
+                    WifiStatus.Text = $"Couldn't join {n.Ssid}";
+                    break;
+            }
+        };
+        return row;
     }
 
     private void RebuildApps()

@@ -39,16 +39,14 @@ public sealed class AppSettings
     public bool AnimateDownloadStart { get; set; } = true;
     public int KeepFinishedDownloadsMinutes { get; set; } = 3;
 
-    // Menu bar
-    public bool MenuBarEnabled { get; set; } = true;
-    public bool MenuBarAppName { get; set; } = true;
-    public bool MenuBarNetwork { get; set; } = true;
-    public bool MenuBarBluetooth { get; set; } = true;
-    public bool MenuBarBattery { get; set; } = true;
-    public bool MenuBarBatteryPercent { get; set; } = true;
-    public bool MenuBarSearch { get; set; } = true;
-    public bool MenuBarQuickSettings { get; set; } = true;
-    public bool MenuBarClock { get; set; } = true;
+    // Status icons in the island's top row
+    public bool StatusWifi { get; set; } = true;
+    public bool StatusBluetooth { get; set; } = true;
+    public bool StatusBattery { get; set; } = true;
+    public bool StatusBatteryPercent { get; set; } = true;
+
+    // Snap layouts
+    public bool SnapAutoFill { get; set; } = true;
 
     // Pinned apps
     public bool PinnedAppsEnabled { get; set; } = true;

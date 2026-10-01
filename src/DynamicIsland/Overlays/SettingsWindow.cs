@@ -205,7 +205,7 @@ internal sealed class SettingsWindow : Window
     }
 
     private static readonly string[] Pages =
-        { "General", "Menu bar", "Now playing", "Notifications", "Black hole", "Downloads", "Pinned apps", "About" };
+        { "General", "Status icons", "Now playing", "Notifications", "Black hole", "Downloads", "Pinned apps", "About" };
 
     private void BuildNav()
     {
@@ -273,17 +273,12 @@ internal sealed class SettingsWindow : Window
         switch (page)
         {
             case "General": BuildGeneral(s); break;
-            case "Menu bar":
-                Toggle("Show the menu bar", "A translucent bar across the top, around the island, like on a Mac", s.MenuBarEnabled, v => AppSettings.Update(x => x.MenuBarEnabled = v));
-                Group("Show in the bar");
-                Toggle("App name", "The app you're using, on the left", s.MenuBarAppName, v => AppSettings.Update(x => x.MenuBarAppName = v));
-                Toggle("Wi‑Fi and network", "Signal strength, wired or offline. Click: Windows' network list", s.MenuBarNetwork, v => AppSettings.Update(x => x.MenuBarNetwork = v));
-                Toggle("Bluetooth", "On or off. Click: Bluetooth settings", s.MenuBarBluetooth, v => AppSettings.Update(x => x.MenuBarBluetooth = v));
-                Toggle("Battery", "Laptops only: the level, charging and time left", s.MenuBarBattery, v => AppSettings.Update(x => x.MenuBarBattery = v));
-                Toggle("Battery percentage", "The exact % next to the battery, updated the moment it changes", s.MenuBarBatteryPercent, v => AppSettings.Update(x => x.MenuBarBatteryPercent = v));
-                Toggle("Search", "Click: Windows search", s.MenuBarSearch, v => AppSettings.Update(x => x.MenuBarSearch = v));
-                Toggle("Quick settings", "Click: Wi‑Fi, Bluetooth, volume and brightness toggles", s.MenuBarQuickSettings, v => AppSettings.Update(x => x.MenuBarQuickSettings = v));
-                Toggle("Date and time", "Click: the Windows calendar", s.MenuBarClock, v => AppSettings.Update(x => x.MenuBarClock = v));
+            case "Status icons":
+                Hint("Shown in the top row of the open island.");
+                Toggle("Wi‑Fi", "Signal strength. Click: the island's Wi‑Fi list, to join or switch networks", s.StatusWifi, v => AppSettings.Update(x => x.StatusWifi = v));
+                Toggle("Bluetooth", "On or off. Click: Bluetooth settings", s.StatusBluetooth, v => AppSettings.Update(x => x.StatusBluetooth = v));
+                Toggle("Battery", "Laptops only: the level, charging and time left", s.StatusBattery, v => AppSettings.Update(x => x.StatusBattery = v));
+                Toggle("Battery percentage", "The exact % next to the battery, updated the moment it changes", s.StatusBatteryPercent, v => AppSettings.Update(x => x.StatusBatteryPercent = v));
                 break;
             case "Now playing":
                 Toggle("Show a preview when a new song starts", "The island briefly shows the song's name", s.ShowSongPreview, v => AppSettings.Update(x => x.ShowSongPreview = v));
@@ -300,6 +295,7 @@ internal sealed class SettingsWindow : Window
                 Toggle("Drag windows into the island", "Hold a window over the island to tuck it away; hover the island to get it back", s.BlackHoleEnabled, v => AppSettings.Update(x => x.BlackHoleEnabled = v));
                 Toggle("Ctrl + Alt + Z", "Throws the active window into the island", s.AbsorbShortcutEnabled, v => AppSettings.Update(x => x.AbsorbShortcutEnabled = v));
                 Toggle("Snap layouts in the island", "Drag a window up to the island and drop it on a layout to arrange it", s.SnapLayoutsEnabled, v => AppSettings.Update(x => x.SnapLayoutsEnabled = v));
+                Toggle("Fill the rest of the layout", "Your next most recent windows fill the other zones automatically", s.SnapAutoFill, v => AppSettings.Update(x => x.SnapAutoFill = v));
                 break;
             case "Downloads":
                 Toggle("Show downloads in the island", "Progress while downloading; click a finished one to open it", s.DownloadsEnabled, v => AppSettings.Update(x => x.DownloadsEnabled = v));

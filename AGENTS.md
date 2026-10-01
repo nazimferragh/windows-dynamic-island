@@ -59,9 +59,9 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
 - **Snap layouts live in the island's drop panel** (`WindowSnapper`, `SnapPreview`): six layouts
   around the black hole, Windows' own snap bar/preview stay off. On portrait monitors every layout
   is transposed (halves → top/bottom). Works on Windows 10 too (which has no snap layouts).
-- **Menu bar** (`MenuBarStrip` + `SystemStatus` + `StatusIcons`): translucent bar with the app in
-  front, Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events), search,
-  quick settings, clock; each opens the matching Windows panel. Icons are our own drawings in the
+- **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar, keep the strip invisible): the island's top row shows
+  Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the
+  island's own Wi‑Fi view (`WifiService`, `WifiPasswordWindow`), not Windows' flyout. Icons are our own drawings in the
   iOS style (don't ship Apple's artwork). Desktop PCs simply have no battery item.
 - High-priority islands run elevated: tests that inject clicks from a normal-rights process can't
   click them (Windows UIPI). Test with an elevated helper or the open-settings-on-relaunch path.

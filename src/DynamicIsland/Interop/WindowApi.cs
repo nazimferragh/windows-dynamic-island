@@ -159,6 +159,24 @@ public static class WindowApi
         return pid;
     }
 
+    public static bool IsMinimized(IntPtr hwnd) => IsIconic(hwnd);
+
+    /// <summary>Hidden by Windows (on another virtual desktop, or a suspended Store app).</summary>
+    public static bool IsCloaked(IntPtr hwnd) =>
+        DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
+
+    /// <summary>Top-level windows from front to back, i.e. most recently used first.</summary>
+    public static System.Collections.Generic.List<IntPtr> TopLevelWindowsInZOrder()
+    {
+        var list = new System.Collections.Generic.List<IntPtr>();
+        EnumWindows((hwnd, _) =>
+        {
+            list.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
+
     public static string GetTitle(IntPtr hwnd)
     {
         var text = new StringBuilder(512);
