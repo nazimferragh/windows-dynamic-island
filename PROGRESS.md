@@ -13,9 +13,12 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-01 (morning). Last shipped commit: `f50b88d` (pushed, installed on the
+Session of 2026-10-01 (morning). Last shipped commit: `9a47ceb` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **Drop to eat** (`9a47ceb`): as in the preview, drag near → island grows → "Let go to tuck it away"
+  → release eats at once. Snap layouts panel now only with **Shift** held during the drag.
+  **Open question for the owner: where should snap layouts live?** (Shift is a stopgap.)
 - **Black hole = approved "Morph"** (`f50b88d`): prototyped in the Black Hole Lab artifact
   (https://claude.ai/artifact/8qDiTu3jGKZ7iD1XnMgm26); owner picked style A, speed 1.05, bounce 0.60,
   then it was ported 1:1 (`Morph` in AbsorbAnimation.cs). Verified by frame bursts (~60 fps). The
@@ -118,6 +121,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-01 · 9a47ceb · Drop-to-eat like the preview; snap panel only with Shift · pushed, deployed
 - 2026-10-01 · f50b88d · Black hole uses the owner-approved Morph animation (from the preview artifact) · pushed, deployed
 - 2026-10-01 · 39bdbe1 · Genie funnel rendered as one smooth mesh (no slices), neck tied to the mouth · pushed, deployed
 - 2026-10-01 · c13684c · Island sucks windows in like a vacuum (genie funnel into the notch) and pours them back out · pushed, deployed
