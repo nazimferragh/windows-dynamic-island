@@ -39,13 +39,13 @@ public partial class IslandWindow : Window
     private static readonly Silhouette ClosedVaultShape = new(250, 32, 6, 10);
     private static readonly Silhouette ClosedVaultHoverShape = new(264, 35, 6, 11);
     private static readonly Silhouette PeekShape = new(290, 58, 8, 18);
-    private static readonly Silhouette NotifyShape = new(470, 84, 16, 26);
+    private static readonly Silhouette NotifyShape = new(470, 84, 10, 26);
     private static readonly Silhouette DownloadStartShape = new(210, 60, 10, 24);
-    private static readonly Silhouette OpenShape = new(640, 206, 14, 32);
+    private static readonly Silhouette OpenShape = new(640, 206, 12, 32);
     private static readonly Silhouette OpenShelfShape = new(640, 336, 14, 32);
     private static readonly Silhouette CaptureShape = new(440, 92, 12, 28);
-    private static readonly Silhouette DropPanelShape = new(660, 146, 14, 30);
-    private static readonly Silhouette DropPanelArmedShape = new(676, 152, 14, 32);
+    private static readonly Silhouette DropPanelShape = new(660, 146, 12, 30);
+    private static readonly Silhouette DropPanelArmedShape = new(676, 152, 12, 32);
 
     // Where a dragged window is pulled in / captured, in DIPs relative to the notch's top-center.
     // The capture zone is deliberately small and needs a short hold: the top of the screen is
@@ -354,10 +354,10 @@ public partial class IslandWindow : Window
         {
             case State.Open:
                 double h = OpenShape.Height;
-                if (ListPanelShown) return new Silhouette(640, h + ListPanelExtra, 20, 28);
+                if (ListPanelShown) return new Silhouette(640, h + ListPanelExtra, 12, 28);
                 if (DownloadsShown && _downloads.Items.Count > 0) h += _downloadsHeight;
                 if (hasVault) h += 130;
-                return new Silhouette(640, h, 20, 28);
+                return new Silhouette(640, h, 12, 28);
             case State.Attract:
                 if (_snapPanel) return _capture ? DropPanelArmedShape : DropPanelShape;
                 if (_capture) return CaptureShape;
@@ -526,11 +526,11 @@ public partial class IslandWindow : Window
     {
         double w = Math.Max(_width.Value, 40);
         double h = Math.Max(_height.Value, 16);
-        double topR = Math.Clamp(_flare.Value, 0, Math.Min(w / 2, h / 2));
-        double botR = Math.Clamp(_radius.Value, 0, Math.Min(w / 2, h - topR));
-        double left = (ActualWidthOrDefault() - w) / 2;
+        double flare = Math.Clamp(_flare.Value, 0, h / 3);
+        double botR = Math.Clamp(_radius.Value, 0, Math.Min(w / 2, h - flare));
+        double left = (ActualWidthOrDefault() - w) / 2; // the body; the flares reach just outside it
 
-        var geometry = BuildNotchGeometry(left, w, h, topR, botR);
+        var geometry = BuildNotchGeometry(left, w, h, flare, botR);
         NotchShape.Data = geometry;
         NotchContent.Clip = geometry;
 
@@ -564,25 +564,28 @@ public partial class IslandWindow : Window
     private double ActualWidthOrDefault() => Notch.ActualWidth > 0 ? Notch.ActualWidth : Width;
 
     /// <summary>
-    /// A clean rounded panel hanging from the top edge: flush at the top with gently rounded top
-    /// corners and generously rounded bottom corners.
+    /// The MacBook notch outline: flush with the top of the screen, the top corners flare outward into
+    /// the screen edge with a small concave quarter-circle (so the island grows out of the edge
+    /// instead of hanging from it), and the bottom corners are rounded.
     /// </summary>
-    private static Geometry BuildNotchGeometry(double left, double width, double height, double topR, double botR)
+    private static Geometry BuildNotchGeometry(double left, double width, double height, double flare, double botR)
     {
         double x0 = left, x1 = left + width;
 
         var geometry = new StreamGeometry();
         using (var ctx = geometry.Open())
         {
-            ctx.BeginFigure(new Point(x0 + topR, 0), isFilled: true, isClosed: true);
-            ctx.LineTo(new Point(x1 - topR, 0), true, false);
-            ctx.ArcTo(new Point(x1, topR), new Size(topR, topR), 0, false, SweepDirection.Clockwise, true, true);
+            ctx.BeginFigure(new Point(x0 - flare, 0), isFilled: true, isClosed: true);
+            ctx.LineTo(new Point(x1 + flare, 0), true, false);
+            // Right flare: from the screen edge, curving down into the island's side.
+            ctx.ArcTo(new Point(x1, flare), new Size(flare, flare), 0, false, SweepDirection.Counterclockwise, true, true);
             ctx.LineTo(new Point(x1, height - botR), true, false);
             ctx.ArcTo(new Point(x1 - botR, height), new Size(botR, botR), 0, false, SweepDirection.Clockwise, true, true);
             ctx.LineTo(new Point(x0 + botR, height), true, false);
             ctx.ArcTo(new Point(x0, height - botR), new Size(botR, botR), 0, false, SweepDirection.Clockwise, true, true);
-            ctx.LineTo(new Point(x0, topR), true, false);
-            ctx.ArcTo(new Point(x0 + topR, 0), new Size(topR, topR), 0, false, SweepDirection.Clockwise, true, true);
+            ctx.LineTo(new Point(x0, flare), true, false);
+            // Left flare: back up and out into the screen edge.
+            ctx.ArcTo(new Point(x0 - flare, 0), new Size(flare, flare), 0, false, SweepDirection.Counterclockwise, true, true);
         }
         geometry.Freeze();
         return geometry;
