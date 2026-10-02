@@ -13,10 +13,10 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
+Session of 2026-10-02 (night). Last shipped commit: `adcc5b0` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
-- **macOS dock replaces the taskbar** (DOCK_COMMIT, owner approved the Dock Lab preview
+- **macOS dock replaces the taskbar** (adcc5b0, owner approved the Dock Lab preview
   https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt with its default values). Taskbar hidden (given
   back on quit/crash/uninstall/Settings › Dock off), dock on the main screen with Liquid Glass bar (blur
   window under it), magnification, bounce, dots, badges from notifications, drag to reorder / drag out
@@ -156,6 +156,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-02 · adcc5b0 · macOS dock replaces the taskbar (Liquid Glass, magnification, Apps grid, Trash, menus) · pushed, deployed
 - 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
 - 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
 - 2026-10-01 · 42b094c · Snap layouts as edges & corners (option C), drop panel removed, Windows docking paused per session · pushed, deployed
