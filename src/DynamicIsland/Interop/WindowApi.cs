@@ -274,48 +274,6 @@ public static class WindowApi
         BringWindowToTop(hwnd);
     }
 
-    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
-    [DllImport("user32.dll")] private static extern void SwitchToThisWindow(IntPtr hwnd, bool altTab);
-
-    public static long GetExStyle(IntPtr hwnd) => GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
-
-    /// <summary>Moves and sizes a window and slots it directly below <paramref name="above"/> in z-order.</summary>
-    public static void PlaceBelow(IntPtr hwnd, IntPtr above, int x, int y, int width, int height) =>
-        SetWindowPos(hwnd, above, x, y, width, height, SWP_NOACTIVATE);
-
-    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
-
-    /// <summary>The scale of the monitor under a point (1.0 = 100 %).</summary>
-    public static double ScaleAt(int x, int y)
-    {
-        try
-        {
-            var m = MonitorFromPoint(new POINT { X = x, Y = y }, MONITOR_DEFAULTTONEAREST);
-            if (GetDpiForMonitor(m, 0, out uint dpi, out _) == 0 && dpi > 0) return dpi / 96.0;
-        }
-        catch { }
-        return 1;
-    }
-
-    public static IntPtr GetOwner(IntPtr hwnd) => GetWindow(hwnd, 4 /* GW_OWNER */);
-
-    /// <summary>Asks a window to close, like its X button.</summary>
-    public static void PostClose(IntPtr hwnd) => PostMessage(hwnd, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
-
-    /// <summary>
-    /// Brings another app's window to the front from one of our no-focus windows. Windows may refuse
-    /// to hand over the foreground; a tap of Alt lifts that lock (the standard workaround).
-    /// </summary>
-    public static void ForceForeground(IntPtr hwnd)
-    {
-        keybd_event(0x12, 0, 0, IntPtr.Zero);
-        keybd_event(0x12, 0, 0x2, IntPtr.Zero);
-        if (!SetForegroundWindow(hwnd) || GetForegroundWindow() != hwnd) SwitchToThisWindow(hwnd, true);
-        BringWindowToTop(hwnd);
-    }
-
     /// <summary>
     /// Lets mouse input fall through one of our overlay windows, and keeps it out of the taskbar and
     /// off any single virtual desktop (WS_EX_APPWINDOW, added by WPF, is removed).

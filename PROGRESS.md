@@ -13,21 +13,17 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-02 (night). Last shipped commit: `adcc5b0` (pushed, installed on the
+Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
-- **macOS dock replaces the taskbar** (adcc5b0, owner approved the Dock Lab preview
-  https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt with its default values). Taskbar hidden (given
-  back on quit/crash/uninstall/Settings › Dock off), dock on the main screen with Liquid Glass bar (blur
-  window under it), magnification, bounce, dots, badges from notifications, drag to reorder / drag out
-  to remove, right-click menus (windows, Keep/Remove, Show in Explorer, Hide, Quit), Apps grid
-  (Launchpad), Downloads, Trash (full/empty), reserved strip so maximized windows end above it, hides
-  over full-screen apps. Seeded from the taskbar's pins. Verified by screenshot: dock shown, taskbar
-  gone, maximized window stops above it, Chrome/web apps grouped right. **Not yet seen: hover
-  magnification, menus, drag, Apps grid** (owner was using the PC). Not done yet: genie minimize into
-  the dock (macOS "minimize into app icon" behaviour for now), clock + tray icons (hidden with the
-  taskbar; plan: show them in the island), dock on other screens, Apple's real icons (owner drops PNGs
-  into Settings › Dock › Open folder).
+- **macOS dock: built, then DROPPED at the owner's request** (`adcc5b0`, reverted). It replaced the
+  taskbar (Liquid Glass dock, Apps grid, Trash…, preview https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt).
+  Owner's verdict after trying it: too many big problems (some icons ugly, laggy/buggy, wanted the
+  Windows key to open Apps, auto-hide docks on the other screens); asked to go back to the version
+  before it. The code was reverted, the island was quit (taskbar given back: auto-hide state restored,
+  taskbar windows shown), dock.json/DockIcons deleted, and the pre-dock build reinstalled.
+  Don't bring the dock back unless the owner asks again; if so, lessons: a layered (AllowsTransparency)
+  WPF window that redraws every frame is slow, prototype the whole thing (icons too) in the preview first.
 
 - **Island always visible** (`4b739d1`, owner: "on iPhone when you open an app the island doesn't
   disappear"): over a maximized app the old black menu-bar strip made the black notch blend in, and
@@ -156,7 +152,6 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
-- 2026-10-02 · adcc5b0 · macOS dock replaces the taskbar (Liquid Glass, magnification, Apps grid, Trash, menus) · pushed, deployed
 - 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
 - 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
 - 2026-10-01 · 42b094c · Snap layouts as edges & corners (option C), drop panel removed, Windows docking paused per session · pushed, deployed
