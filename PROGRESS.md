@@ -16,13 +16,18 @@ public release step yet.
 Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
-- **IN PROGRESS: macOS dock replacing the taskbar.** Owner wants the PC to look like a Mac (latest macOS 26
-  dock, Apple's real icons are fine since it's personal use, but keep them out of the public repo: load
-  them from a local folder). Agreed approach: our own dock in this app + hide the Windows taskbar while it
-  runs (restored on quit/crash, like `EdgeSnapping`); clock/tray icons move into the island later; no
-  restyling of other apps' windows (needs injection, anti-cheat risk). Step 1, preview: **Dock Lab**
-  https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt (look, magnification, bounce, genie minimize,
-  reorder/remove, right-click menu, Apps grid). **Waiting for the owner to tune and approve**, then port 1:1.
+- **macOS dock replaces the taskbar** (DOCK_COMMIT, owner approved the Dock Lab preview
+  https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt with its default values). Taskbar hidden (given
+  back on quit/crash/uninstall/Settings › Dock off), dock on the main screen with Liquid Glass bar (blur
+  window under it), magnification, bounce, dots, badges from notifications, drag to reorder / drag out
+  to remove, right-click menus (windows, Keep/Remove, Show in Explorer, Hide, Quit), Apps grid
+  (Launchpad), Downloads, Trash (full/empty), reserved strip so maximized windows end above it, hides
+  over full-screen apps. Seeded from the taskbar's pins. Verified by screenshot: dock shown, taskbar
+  gone, maximized window stops above it, Chrome/web apps grouped right. **Not yet seen: hover
+  magnification, menus, drag, Apps grid** (owner was using the PC). Not done yet: genie minimize into
+  the dock (macOS "minimize into app icon" behaviour for now), clock + tray icons (hidden with the
+  taskbar; plan: show them in the island), dock on other screens, Apple's real icons (owner drops PNGs
+  into Settings › Dock › Open folder).
 
 - **Island always visible** (`4b739d1`, owner: "on iPhone when you open an app the island doesn't
   disappear"): over a maximized app the old black menu-bar strip made the black notch blend in, and

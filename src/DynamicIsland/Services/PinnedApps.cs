@@ -18,6 +18,8 @@ public sealed class PinnedApp
     public string Name { get; set; } = "";
     /// <summary>The program behind it when known, so a running copy can be brought to the front.</summary>
     public string ExePath { get; set; } = "";
+    /// <summary>The app's AppUserModelID when known (how Windows groups its windows), e.g. from a taskbar pin.</summary>
+    public string Aumid { get; set; } = "";
 
     /// <summary>What the shell calls it, for icons.</summary>
     [System.Text.Json.Serialization.JsonIgnore]

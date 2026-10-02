@@ -90,6 +90,16 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   spring. The curves live in `Morph` (`AbsorbAnimation.cs`) and must stay identical to the
   preview. Owner rejected: orbit/accretion disk, sliced genie, mesh genie. For any change to this
   motion, update the preview first and get approval, then port.
+- **Mac dock instead of the taskbar** (owner's request, approved in the Dock Lab preview
+  https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt: Liquid Glass, size 56, magnification 1.6, spread
+  2.6, follow 0.24, bounce 0.55). `DockWindow` (+ a blur window under the bar, `GlassBlur`), `DockModel`
+  (kept apps in dock.json, first copied from the taskbar's pins; open apps grouped by AppUserModelID
+  like the taskbar), `TaskbarHider` (auto-hide + hidden while the dock is on, always given back on
+  quit/crash/uninstall/setting off), `LaunchpadWindow` (Apps grid), `DockMenu`. The dock reserves its
+  strip (`AppBar`) so maximized windows end above it, hides over full-screen apps, and only animates
+  while something moves. Apple's real icons are allowed for the owner's own use but never committed:
+  they're loaded from `%LOCALAPPDATA%\DynamicIsland\DockIcons` (`DockIcons`). Apps are launched through
+  explorer.exe so they never inherit the elevated island's admin rights.
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
 - **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar and any strip behind the island). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the

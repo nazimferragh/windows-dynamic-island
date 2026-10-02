@@ -205,7 +205,7 @@ internal sealed class SettingsWindow : Window
     }
 
     private static readonly string[] Pages =
-        { "General", "Status icons", "Now playing", "Notifications", "Black hole", "Downloads", "Pinned apps", "About" };
+        { "General", "Dock", "Status icons", "Now playing", "Notifications", "Black hole", "Downloads", "Pinned apps", "About" };
 
     private void BuildNav()
     {
@@ -303,6 +303,18 @@ internal sealed class SettingsWindow : Window
                 Toggle("Show downloads in the island", "Progress while downloading; click a finished one to open it", s.DownloadsEnabled, v => AppSettings.Update(x => x.DownloadsEnabled = v));
                 Toggle("Animate when a download starts", "The island pops out with a drop animation", s.AnimateDownloadStart, v => AppSettings.Update(x => x.AnimateDownloadStart = v));
                 Choice("Keep finished downloads listed for", "", new[] { ("1 min", 1), ("3 min", 3), ("10 min", 10) }, s.KeepFinishedDownloadsMinutes, v => AppSettings.Update(x => x.KeepFinishedDownloadsMinutes = v));
+                break;
+            case "Dock":
+                Toggle("Use the Mac dock instead of the taskbar", "The Windows taskbar is hidden while the dock is on, and comes back when you turn this off or quit", s.DockEnabled, v => AppSettings.Update(x => x.DockEnabled = v));
+                Choice("Icon size", "", new[] { ("Small", 46), ("Medium", 56), ("Large", 68) }, s.DockIconSize, v => AppSettings.Update(x => x.DockIconSize = v));
+                Choice("Magnification", "How much icons grow under the pointer", new[] { ("Off", 100), ("Some", 130), ("Mac", 160), ("Big", 200) },
+                    (int)Math.Round(s.DockMagnification * 100), v => AppSettings.Update(x => x.DockMagnification = v / 100.0));
+                Hint("Drag an app to move it; drag it up and out to remove it. Right-click for more. To use Apple's own icons, put PNG files in the DockIcons folder (finder.png, trash.png, chrome.png…).");
+                Card(Label("Your own icons", "PNG files named after the app or program"), ActionButton("Open folder", () =>
+                {
+                    System.IO.Directory.CreateDirectory(DockIcons.Folder);
+                    OpenUrl(DockIcons.Folder);
+                }));
                 break;
             case "Pinned apps": BuildPinned(s); break;
             case "About": BuildAbout(); break;

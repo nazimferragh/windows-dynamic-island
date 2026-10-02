@@ -40,6 +40,8 @@ public partial class App : Application
     private DownloadWatcher? _downloads;
     private NotificationService? _notifications;
     private PinnedApps? _pins;
+    private DockModel? _dockModel;
+    private Overlays.DockWindow? _dock;
     private HwndSource? _hotkeySink;
     private bool _hidden;
 
@@ -60,6 +62,7 @@ public partial class App : Application
         if (e.Args.Contains(NotificationBanners.RestoreArg))
         {
             NotificationBanners.RestoreAll();
+            TaskbarHider.Release(); // and the taskbar, if the dock had it hidden
             Shutdown();
             return;
         }
@@ -247,6 +250,7 @@ public partial class App : Application
 
         _media = new MediaService();
         CreateIslands();
+        ApplyDock();
         CreateTrayIcon();
         RegisterAbsorbHotkey();
         CursorFence.Start();
@@ -255,6 +259,9 @@ public partial class App : Application
         {
             _displayChangeDebounce.Stop();
             CreateIslands();
+            _dock?.Close();
+            _dock = null;
+            ApplyDock();
         };
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
@@ -271,6 +278,9 @@ public partial class App : Application
         // Only the copy that runs the island gives Windows' snapping back: the extra launches
         // (the every-minute safety task, opening the app again) exit at once and must not.
         if (_ownsMutex) EdgeSnapping.Release();
+        _dock?.Close();
+        _dockModel?.Dispose();
+        if (_ownsMutex) TaskbarHider.Release();
         _dragWatcher?.Dispose();
         _downloads?.Dispose();
         if (_hotkeySink != null)
@@ -289,6 +299,41 @@ public partial class App : Application
         if (_ownsMutex) _mutex?.ReleaseMutex();
         _mutex?.Dispose();
         base.OnExit(e);
+    }
+
+    /// <summary>The Mac dock on the main screen, replacing the taskbar (Settings › Dock).</summary>
+    private void ApplyDock()
+    {
+        try
+        {
+            if (!AppSettings.Current.DockEnabled)
+            {
+                _dock?.Close();
+                _dock = null;
+                _dockModel?.Dispose();
+                _dockModel = null;
+                TaskbarHider.Apply(false);
+                return;
+            }
+            // The taskbar goes first, so the dock's reserved strip is all that's left at the bottom.
+            TaskbarHider.Apply(true);
+            _dockModel ??= new DockModel();
+            if (_dock != null)
+            {
+                _dock.ApplySettings();
+                return;
+            }
+            var primary = Forms.Screen.PrimaryScreen!.Bounds;
+            var monitor = new Int32Rect(primary.X, primary.Y, primary.Width, primary.Height);
+            var model = _dockModel;
+            _dock = new Overlays.DockWindow(model, _notifications!, monitor, () => Overlays.LaunchpadWindow.Toggle(model, monitor));
+            _dock.Show();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Couldn't set up the dock", ex);
+            TaskbarHider.Apply(false);
+        }
     }
 
     /// <summary>One island per monitor. Rebuilt whenever monitors are added, removed or rearranged.</summary>
@@ -453,6 +498,7 @@ public partial class App : Application
             CreateIslands();
         }
         EdgeSnapping.Apply(s.SnapLayoutsEnabled);
+        ApplyDock();
         // Never leave the user without notifications: banners are hidden only while the island shows them.
         if (s.ShouldHideBanners) NotificationBanners.HideAll();
         else NotificationBanners.RestoreAll();
@@ -525,6 +571,7 @@ public partial class App : Application
         {
             _vault?.RestoreAll();
             EdgeSnapping.Release();
+            TaskbarHider.Release();
             foreach (var island in _islands)
             {
                 island.ReleaseCursor();

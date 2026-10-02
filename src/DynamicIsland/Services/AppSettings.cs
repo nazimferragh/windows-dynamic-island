@@ -53,6 +53,11 @@ public sealed class AppSettings
     // Snap layouts
     public bool SnapAutoFill { get; set; } = true;
 
+    // Dock (macOS dock instead of the taskbar)
+    public bool DockEnabled { get; set; } = true;
+    public int DockIconSize { get; set; } = 56;
+    public double DockMagnification { get; set; } = 1.6;
+
     // Pinned apps
     public bool PinnedAppsEnabled { get; set; } = true;
 
