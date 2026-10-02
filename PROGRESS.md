@@ -16,6 +16,14 @@ public release step yet.
 Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
 owner's PC as the current 0.7.0 build).
 
+- **IN PROGRESS: macOS dock replacing the taskbar.** Owner wants the PC to look like a Mac (latest macOS 26
+  dock, Apple's real icons are fine since it's personal use, but keep them out of the public repo: load
+  them from a local folder). Agreed approach: our own dock in this app + hide the Windows taskbar while it
+  runs (restored on quit/crash, like `EdgeSnapping`); clock/tray icons move into the island later; no
+  restyling of other apps' windows (needs injection, anti-cheat risk). Step 1, preview: **Dock Lab**
+  https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt (look, magnification, bounce, genie minimize,
+  reorder/remove, right-click menu, Apps grid). **Waiting for the owner to tune and approve**, then port 1:1.
+
 - **Island always visible** (`4b739d1`, owner: "on iPhone when you open an app the island doesn't
   disappear"): over a maximized app the old black menu-bar strip made the black notch blend in, and
   game mode hid the island on the game's screen. Now: no strip and nothing reserved at the top (apps
