@@ -13,8 +13,21 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-02 (night). Last shipped commit: `4b739d1` (pushed, installed on the
-owner's PC as the current 0.7.0 build).
+Session of 2026-10-05. Last shipped commit: `2cc45f1` (pushed, installed on the owner's PC as
+the current 0.7.0 build).
+
+- **Nothing under the island, like the Mac** (`2cc45f1`, owner's screenshots: Chrome tabs under
+  the island on the main and portrait screens). The closed island's band (32 DIP) is reserved again
+  as an app bar, but **nothing is drawn** (no black strip): maximized/snapped apps start below it,
+  wallpaper on both sides. Verified: work areas top 32/40/32 px on the 3 screens, screenshots show
+  VS Code / Settings starting under the island. Full-screen games still go under it.
+- **Download progress line** (`2cc45f1`): green line + % when the total is known; Chrome/Edge
+  downloads only expose bytes so far, so there the line slides and shows "8 MB". Verified on screen
+  with a fake growing .crdownload. Reading Chrome's History DB for the total was **refused by the
+  safety checks** (browsing data) — don't revisit; the owner was told.
+- **Snap on an edge shared with another screen** (`2cc45f1`): soft wall in the mouse hook while
+  dragging; pushing on (~260 px of travel) goes through to the other screen. **Not drag-tested**
+  (owner was using the mouse) — owner should try the main screen's left edge.
 
 - **macOS dock: built, then DROPPED at the owner's request** (`adcc5b0`, reverted). It replaced the
   taskbar (Liquid Glass dock, Apps grid, Trash…, preview https://claude.ai/artifact/L17cXCPHWhc4qd1YwJNSFt).
@@ -94,6 +107,10 @@ Earlier (2026-09-30 → 10-01, `a66dba9`):
 ## Next — waiting on the owner
 
 In order:
+00. **Try the 3 fixes from 2cc45f1**: maximize Chrome (tabs should be below the island); download
+    something in Chrome (sliding line + MB); drag a window to the main screen's left edge (should
+    stop and show the half outline; push hard to go to the left screen). Tell if the push is too
+    strong/weak.
 0. **Try the new things from 6e01e57**: drag an app in the Apps view left/right (hold or just
    drag); drop a window on a snap zone and watch it glide; absorb a window and click it on the
    shelf to see it come back out. Check the island opens fast and smooth enough on hover.
@@ -152,6 +169,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-05 · 2cc45f1 · Nothing under the island (invisible reserved band), download progress line, snapping on shared screen edges · pushed, deployed
 - 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
 - 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
 - 2026-10-01 · 42b094c · Snap layouts as edges & corners (option C), drop panel removed, Windows docking paused per session · pushed, deployed
