@@ -29,6 +29,9 @@ internal sealed class TopEdge : IDisposable
     /// <summary>Top of the island in physical pixels.</summary>
     public int Top { get; private set; }
 
+    /// <summary>Bottom of the reserved band in physical pixels (where apps start); equals Top when nothing is reserved.</summary>
+    public int Bottom { get; private set; }
+
     /// <summary>Raised when the top moved (e.g. the taskbar was docked to the top or moved away).</summary>
     public event Action? Changed;
 
@@ -79,6 +82,7 @@ internal sealed class TopEdge : IDisposable
     {
         if (_reserved && _appBar is { IsRegistered: true }) return; // Apply() keeps Top up to date
         int top = Measure();
+        Bottom = top;
         SetTop(top);
     }
 
@@ -104,7 +108,10 @@ internal sealed class TopEdge : IDisposable
     {
         if (_appBar is not { IsRegistered: true } || _height <= 0) return;
         var rect = _appBar.ReserveTop(MonitorRect, _height);
-        SetTop(rect.Top);
+        bool moved = rect.Bottom != Bottom;
+        Bottom = rect.Bottom;
+        if (rect.Top != Top) SetTop(rect.Top);
+        else if (moved) Changed?.Invoke();
     }
 
     private void SetTop(int top)

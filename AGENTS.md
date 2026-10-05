@@ -54,7 +54,10 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   it never disappears over maximized apps or full-screen games, and there is no bar drawn behind
   it. The closed island's band (32 DIP) is reserved at the top of every screen as an app bar
   (`TopEdge`, the Mac menu bar's job): maximized and snapped windows start below it, so no tab or
-  title bar ever sits under the island; the wallpaper shows on both sides. Full-screen games/videos
+  title bar ever sits under the island. While a window is maximized on that screen, the band
+  takes the color of the app's own top edge (`TopBandFill`, owner's pick "F" in the Top Band Lab
+  preview https://claude.ai/artifact/SHDEGvLL7DyyMBUWB35ZpD), so the app seems to reach the island;
+  over the desktop the wallpaper shows. Rejected there: black band, glass bar, Mac menu bar, shade. Full-screen games/videos
   ignore the band and the island floats over them (faint rim for dark apps). The band is given back
   on quit/crash/hide. Hiding over full-screen apps is an opt-in setting, off by default.
 - **Light on resources, especially in games** (`GameMode`): when a full-screen app (exclusive or

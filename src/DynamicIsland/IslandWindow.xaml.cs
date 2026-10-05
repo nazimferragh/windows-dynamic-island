@@ -63,6 +63,7 @@ public partial class IslandWindow : Window
     private readonly PinnedApps _pins;
     private readonly Int32Rect _monitor; // physical pixels
     private readonly TopEdge _edge;
+    private readonly TopBandFill _bandFill;
     private readonly SolidColorBrush _accentBrush = new(ColorExtractor.DefaultAccent);
     /// <summary>Sliders, today's date, download bar: the Windows accent (Settings › Match Windows colors), else white.</summary>
     private readonly SolidColorBrush _uiBrush = new(Colors.White);
@@ -126,6 +127,10 @@ public partial class IslandWindow : Window
         _edge = new TopEdge(monitorBounds);
         _edge.Changed += PositionOnMonitor;
         _edge.FullscreenAppChanged += () => Watchdog();
+        // Shown first so the island always stacks above it.
+        _bandFill = new TopBandFill(monitorBounds, () => (_edge.Top, _edge.Bottom));
+        _bandFill.Raised += () => { if (_hwnd != IntPtr.Zero) WindowApi.RaiseTopmost(_hwnd); };
+        _edge.Changed += _bandFill.Place;
 
         ClosedEq.BarBrush = _accentBrush;
         OpenEq.BarBrush = _accentBrush;
@@ -188,6 +193,7 @@ public partial class IslandWindow : Window
             _watchdogTimer.Stop();
             _ghost?.Close();
             ReleaseCursor();
+            _bandFill.Close();
             _edge.Dispose();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
@@ -283,6 +289,7 @@ public partial class IslandWindow : Window
         NativeMethods.MakeOverlayWindow(_hwnd);
         PositionOnMonitor();
         ReserveTop();
+        if (!_userHidden) _bandFill.Start();
         _tickTimer.Start();
         _watchdogTimer.Start();
     }
@@ -1818,8 +1825,16 @@ public partial class IslandWindow : Window
         }
 
         // Full-screen apps ignore the reserved band anyway; only give it back when the user hides the island.
-        if (_userHidden) _edge.Release();
-        else ReserveTop();
+        if (_userHidden)
+        {
+            _bandFill.Stop();
+            _edge.Release();
+        }
+        else
+        {
+            ReserveTop();
+            _bandFill.Start();
+        }
     }
 
     // ---------------------------------------------------------------- input
