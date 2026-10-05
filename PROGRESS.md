@@ -13,8 +13,16 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-05. Last shipped commit: `2cc45f1` (pushed, installed on the owner's PC as
+Session of 2026-10-05. Last shipped commit: `c51b8b7` (pushed, installed on the owner's PC as
 the current 0.7.0 build).
+
+- **Strip = app color** (`c51b8b7`): owner compared 9 designs in the Top Band Lab preview
+  (https://claude.ai/artifact/SHDEGvLL7DyyMBUWB35ZpD), hesitated between F (app color) and
+  I (soft shadow), took the recommendation **F**. While a window is maximized, the band beside the
+  island is filled with the app's top-edge color (`TopBandFill`); wallpaper over the desktop; off in
+  games. Verified by screenshots on all 3 screens (CRM, VS Code, Settings); ~3% of one core with
+  music playing. Desktop (no maximized window) case not screenshotted (would need to minimize the
+  owner's windows). Known: an app whose top is near-black makes the island blend (rim helps).
 
 - **Nothing under the island, like the Mac** (`2cc45f1`, owner's screenshots: Chrome tabs under
   the island on the main and portrait screens). The closed island's band (32 DIP) is reserved again
@@ -107,6 +115,8 @@ Earlier (2026-09-30 → 10-01, `a66dba9`):
 ## Next — waiting on the owner
 
 In order:
+000. **Look at the strip beside the island** with different apps maximized (light app, dark app,
+     desktop). Say if a color looks wrong.
 00. **Try the 3 fixes from 2cc45f1**: maximize Chrome (tabs should be below the island); download
     something in Chrome (sliding line + MB); drag a window to the main screen's left edge (should
     stop and show the half outline; push hard to go to the left screen). Tell if the push is too
@@ -169,6 +179,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-05 · c51b8b7 · Strip beside the island takes the maximized app's top color (option F) · pushed, deployed
 - 2026-10-05 · 2cc45f1 · Nothing under the island (invisible reserved band), download progress line, snapping on shared screen edges · pushed, deployed
 - 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
 - 2026-10-01 · 0f5f4b8 · Game mode (per-screen hide, no animations, slow polls, low priority), sleeping YouTube panel, snapping-release fix · pushed, deployed
