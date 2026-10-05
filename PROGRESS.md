@@ -13,8 +13,26 @@ public release step yet.
 
 ## Now — the last thing we were working on
 
-Session of 2026-10-05. Last shipped commit: `c51b8b7` (pushed, installed on the owner's PC as
-the current 0.7.0 build).
+Session of 2026-10-05. Last shipped commit: `048e9e5` = **v0.8.0, published as the Latest GitHub
+release** (https://github.com/nazimferragh/windows-dynamic-island/releases/tag/v0.8.0, installer
+61 MB, built by the release workflow from tag `v0.8.0`; **not code-signed**: SignPath isn't set up,
+so SmartScreen warns). Installed on the owner's PC (elevated/high priority, as before).
+
+- **Performance pass** (`048e9e5`, owner asked for least CPU/RAM/GPU/SSD, no FPS drops, Win10+11).
+  Measured with the island's whole process tree, 3 monitors, music paused:
+  CPU 3.5% → **~1.2%** of one core (spikes when the owner hovers/opens it), game mode **~0.3%**
+  (only 5 s measured: the owner kept switching windows during the test), private RAM 711 → **~200 MB**,
+  GPU 0 (WPF layered windows render on CPU; DWM composes), disk writes 0.
+  Root causes found with dotnet-trace on a temporary normal-rights instance (HighPriority set to 0
+  then restored to 1): always-on LL mouse hook (now only during drags), notification polling on the
+  UI thread (STA objects released through it: ~300 wakeups/s + blocked finalizer → now MTA thread),
+  MicActivity opening every process each second (stale entry) → registry change notifications +
+  cached verdicts, 760×370 layered windows → 360×64 while closed, WebView2 kept alive (~400 MB) →
+  closed after 3 min unused, compressed single-file → uncompressed + ReadyToRun.
+  CI compat smoke test passed on windows-2022 (Win10 code base) and windows-2025 (Win11).
+  **Not test-driven after the changes**: a window drag (hook now engages at drag start), the
+  music bars while playing (owner's music was paused; not started to avoid disturbing him),
+  YouTube panel auto-close after 3 min. Island open/close by command verified by screenshot.
 
 - **Strip = app color** (`c51b8b7`): owner compared 9 designs in the Top Band Lab preview
   (https://claude.ai/artifact/SHDEGvLL7DyyMBUWB35ZpD), hesitated between F (app color) and
@@ -115,6 +133,9 @@ Earlier (2026-09-30 → 10-01, `a66dba9`):
 ## Next — waiting on the owner
 
 In order:
+0000. **Use v0.8.0 normally and play a game**: say if anything feels slower, a drag to an edge
+      misbehaves, or the island fails to open fully. Optional: set up SignPath signing (README →
+      Code signing) so downloads stop showing the SmartScreen warning.
 000. **Look at the strip beside the island** with different apps maximized (light app, dark app,
      desktop). Say if a color looks wrong.
 00. **Try the 3 fixes from 2cc45f1**: maximize Chrome (tabs should be below the island); download
@@ -142,8 +163,6 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 
 ## Ideas discussed, not started
 
-- Bump the version (code still says 0.7.0 although several features shipped since) and publish a
-  proper GitHub release / installer.
 - Snap layouts: glide the real window into its zone (currently it jumps; only the outline animates).
 - Drag-and-drop pinning while the island runs elevated (blocked by Windows UIPI; the fix would weaken
   a security boundary — see Context).
@@ -179,6 +198,7 @@ or use "Nazim Ferragh" like the GitHub account / copyright line?)
 "deployed" = installed on the owner's PC. Earlier entries (before 2026-09-30's session) were pushed;
 their deployment state isn't recorded.
 
+- 2026-10-05 · 048e9e5 · v0.8.0: CPU 3.5%→1.2% (0.3% gaming), RAM 711→200 MB, README; published as GitHub release v0.8.0 · pushed, deployed, released
 - 2026-10-05 · c51b8b7 · Strip beside the island takes the maximized app's top color (option F) · pushed, deployed
 - 2026-10-05 · 2cc45f1 · Nothing under the island (invisible reserved band), download progress line, snapping on shared screen edges · pushed, deployed
 - 2026-10-02 · 4b739d1 · Island always visible: no top strip, floats over maximized apps, stays over full-screen games, faint rim · pushed, deployed
