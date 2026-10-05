@@ -268,6 +268,7 @@ public partial class App : Application
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         Overlays.MediaBrowserWindow.ShutDown();
         _vault?.RestoreAll();
+        foreach (var island in _islands) island.ReleaseReservedSpace();
         // Only the copy that runs the island gives Windows' snapping back: the extra launches
         // (the every-minute safety task, opening the app again) exit at once and must not.
         if (_ownsMutex) EdgeSnapping.Release();
@@ -528,6 +529,7 @@ public partial class App : Application
             foreach (var island in _islands)
             {
                 island.ReleaseCursor();
+                island.ReleaseReservedSpace();
             }
         }
         catch

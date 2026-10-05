@@ -260,6 +260,10 @@ public static class WindowApi
         SetWindowPos(hwnd, HWND_TOP, left, top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    /// <summary>True when some monitor covers this physical point.</summary>
+    public static bool HasMonitorAt(int x, int y) =>
+        MonitorFromPoint(new POINT { X = x, Y = y }, 0 /* MONITOR_DEFAULTTONULL */) != IntPtr.Zero;
+
     public static RECT GetWorkArea(int x, int y)
     {
         var monitor = MonitorFromPoint(new POINT { X = x, Y = y }, MONITOR_DEFAULTTONEAREST);

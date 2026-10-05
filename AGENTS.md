@@ -50,10 +50,13 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   - Known limit: in high priority the island runs elevated, so Windows blocks drag-and-drop from
     Explorer onto it (pinning via the "+" picker still works). Don't "fix" this by relaxing
     Windows' message filtering (UIPI); that lowers a security boundary.
-- **Always visible, like the iPhone's island** (owner's rule, 2026-10-02): it never disappears
-  over maximized apps or full-screen games, and there is no bar behind it. Nothing is reserved at
-  the top (`TopEdge`): apps use the whole screen and the island floats over them; a faint rim
-  keeps it visible on dark apps. Hiding over full-screen apps is an opt-in setting, off by default.
+- **Always visible, nothing under it, like the Mac notch** (owner's rules, 2026-10-02 and 10-05):
+  it never disappears over maximized apps or full-screen games, and there is no bar drawn behind
+  it. The closed island's band (32 DIP) is reserved at the top of every screen as an app bar
+  (`TopEdge`, the Mac menu bar's job): maximized and snapped windows start below it, so no tab or
+  title bar ever sits under the island; the wallpaper shows on both sides. Full-screen games/videos
+  ignore the band and the island floats over them (faint rim for dark apps). The band is given back
+  on quit/crash/hide. Hiding over full-screen apps is an opt-in setting, off by default.
 - **Light on resources, especially in games** (`GameMode`): when a full-screen app (exclusive or
   borderless) is in front, the island stays but nothing animates, it only re-raises itself when the
   game really got above it, background checks slow to 4–30 s (register new timers with `GameMode.Tune`), and
@@ -78,7 +81,9 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   middle is always the black hole's. White outline + dashed other half (`SnapPreview`), the window
   glides in, the most recent other window takes the other half (`SnapAutoFill`). Windows' own
   drag-to-edge docking is paused for the session while this is on (`EdgeSnapping`, never saved,
-  given back on quit/crash/setting off; Win+arrows still work). Works on Windows 10 and 11.
+  given back on quit/crash/setting off; Win+arrows still work). An edge shared with another screen
+  gets a soft wall during the drag (`CursorFence.RaiseWalls`), so its half/quarters work too;
+  pushing on through it moves the window to the other screen. Works on Windows 10 and 11.
 - **Hover to open**: hovering Wi‑Fi, Bluetooth or Apps in the open island opens it at once (90 ms,
   only to ignore the pointer passing through; Settings waits 450 ms since it leaves the island).
   The owner wants it instant; don't add a visible countdown. A click right after a hover-open
@@ -90,6 +95,10 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   spring. The curves live in `Morph` (`AbsorbAnimation.cs`) and must stay identical to the
   preview. Owner rejected: orbit/accretion disk, sliced genie, mesh genie. For any change to this
   motion, update the preview first and get approval, then port.
+- **Downloads show progress in the closed island**: a green line + percent when the total is known;
+  when it isn't (browsers writing `.crdownload`/`.part` only expose the bytes so far) the line slides
+  and the text shows the size so far. Reading browsers' history databases for the total was refused
+  by the safety checks (browsing data); don't revisit.
 - **Pinned apps rearrange like iOS**: hold (or drag) an app, the others jiggle and slide aside.
 - **Status in the island** (`SystemStatus` + `StatusIcons`; the owner rejected a separate top bar and any strip behind the island). Wi‑Fi and Bluetooth are fully controlled inside the island (`WifiService`: join/disconnect/forget/password; `BluetoothService`: on/off, connect/disconnect/forget, discover + pair with PIN), never by sending the user to Windows' panels. The island's top row shows
   Wi‑Fi/Ethernet, Bluetooth, battery (exact %, live via `PowerManager` events). Wi‑Fi opens the

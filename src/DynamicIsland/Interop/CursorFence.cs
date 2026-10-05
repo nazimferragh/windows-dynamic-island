@@ -71,6 +71,34 @@ public static class CursorFence
 
     public static void Lower() => _active = false;
 
+    // Side walls: soft stops at a monitor's left/right edge where another screen continues, so a
+    // dragged window can snap to that edge. Pushing on past the wall (PushThrough of attempted
+    // travel) lets the pointer through onto the other screen.
+    private const int PushThrough = 260;
+    private static volatile bool _walls;
+    private static int _wallLeft = int.MinValue, _wallRight = int.MaxValue, _wallTop, _wallBottom;
+    private static int _push;
+
+    /// <summary>
+    /// Holds the pointer at <paramref name="left"/> and/or <paramref name="right"/> (the monitor's
+    /// outer pixel columns; null = no wall on that side) between top and bottom, physical pixels.
+    /// Re-arming with the same walls keeps the current push.
+    /// </summary>
+    public static void RaiseWalls(int? left, int? right, int top, int bottom)
+    {
+        EnsureHook();
+        int l = left ?? int.MinValue, r = right ?? int.MaxValue;
+        if (_walls && l == _wallLeft && r == _wallRight && top == _wallTop && bottom == _wallBottom) return;
+        Interlocked.Exchange(ref _wallLeft, l);
+        Interlocked.Exchange(ref _wallRight, r);
+        Interlocked.Exchange(ref _wallTop, top);
+        Interlocked.Exchange(ref _wallBottom, bottom);
+        Interlocked.Exchange(ref _push, 0);
+        _walls = left != null || right != null;
+    }
+
+    public static void LowerWalls() => _walls = false;
+
     /// <summary>Installs the (idle) hook up front so the very first drag is already covered.</summary>
     public static void Start() => EnsureHook();
 
@@ -93,6 +121,28 @@ public static class CursorFence
 
     private static IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)
     {
+        if (code >= 0 && _walls && wParam == WM_MOUSEMOVE)
+        {
+            var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            if (info.Y >= _wallTop && info.Y < _wallBottom)
+            {
+                int over = info.X < _wallLeft ? _wallLeft - info.X : info.X > _wallRight ? info.X - _wallRight : 0;
+                if (over > 0)
+                {
+                    int push = Interlocked.Add(ref _push, over);
+                    if (push < PushThrough)
+                    {
+                        SetCursorPos(info.X < _wallLeft ? _wallLeft : _wallRight, info.Y);
+                        return (IntPtr)1;
+                    }
+                    _walls = false; // pushed through: off to the other screen
+                }
+                else if (info.X > _wallLeft + 24 && info.X < _wallRight - 24)
+                {
+                    Interlocked.Exchange(ref _push, 0); // backed away from the wall
+                }
+            }
+        }
         if (code >= 0 && _active && wParam == WM_MOUSEMOVE)
         {
             var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);

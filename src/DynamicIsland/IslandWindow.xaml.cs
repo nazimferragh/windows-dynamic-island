@@ -125,6 +125,7 @@ public partial class IslandWindow : Window
 
         _edge = new TopEdge(monitorBounds);
         _edge.Changed += PositionOnMonitor;
+        _edge.FullscreenAppChanged += () => Watchdog();
 
         ClosedEq.BarBrush = _accentBrush;
         OpenEq.BarBrush = _accentBrush;
@@ -187,6 +188,7 @@ public partial class IslandWindow : Window
             _watchdogTimer.Stop();
             _ghost?.Close();
             ReleaseCursor();
+            _edge.Dispose();
             if (_animating) CompositionTarget.Rendering -= OnRendering;
         };
         SourceInitialized += OnSourceInitialized;
@@ -280,6 +282,7 @@ public partial class IslandWindow : Window
         _hwnd = new WindowInteropHelper(this).Handle;
         NativeMethods.MakeOverlayWindow(_hwnd);
         PositionOnMonitor();
+        ReserveTop();
         _tickTimer.Start();
         _watchdogTimer.Start();
     }
@@ -289,8 +292,20 @@ public partial class IslandWindow : Window
         base.OnDpiChanged(oldDpi, newDpi);
         // Windows resizes the window for the new scale *after* this returns; centering now would use
         // the old size and leave the island off-center on monitors with a different scale (e.g. 125%).
-        Dispatcher.BeginInvoke(PositionOnMonitor, DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(() => { ReserveTop(); PositionOnMonitor(); }, DispatcherPriority.Loaded);
     }
+
+    /// <summary>The closed island's height, kept free of other windows like the Mac menu bar.</summary>
+    private const double ReservedBand = 32;
+
+    private void ReserveTop()
+    {
+        if (_userHidden) return;
+        _edge.Reserve((int)Math.Round(ReservedBand * DpiScale));
+    }
+
+    /// <summary>Gives the reserved top band back to other windows (on exit or crash).</summary>
+    public void ReleaseReservedSpace() => _edge.Release();
 
     private double DpiScale => _hwnd == IntPtr.Zero ? 1 : VisualTreeHelper.GetDpi(this).DpiScaleX;
 
@@ -653,10 +668,16 @@ public partial class IslandWindow : Window
         bool holeOn = settings.BlackHoleEnabled, snapOn = settings.SnapLayoutsEnabled;
         if ((!holeOn && !snapOn) || !drag.IsMove || !IsVisible || !IsOnMyMonitor(drag.CursorX, drag.CursorY) || !WindowVault.CanAbsorb(drag.Hwnd))
         {
+            if (IsOnMyMonitor(drag.CursorX, drag.CursorY)) CursorFence.LowerWalls();
             ClearEdge();
             ExitAttract();
             return;
         }
+
+        // A side shared with another screen gets a soft wall, so its half/quarters work like any
+        // other edge; pushing on through it moves the window to the other screen.
+        if (snapOn) RaiseSideWalls(drag.CursorY);
+        else CursorFence.LowerWalls();
 
         // The top middle is always the black hole's; edges and corners arrange the window.
         bool inZone = holeOn && IsInCaptureZone(drag.CursorX, drag.CursorY);
@@ -701,8 +722,18 @@ public partial class IslandWindow : Window
         ApplyState(animate: true);
     }
 
+    private void RaiseSideWalls(int cursorY)
+    {
+        int left = _monitor.X, right = _monitor.X + _monitor.Width - 1;
+        CursorFence.RaiseWalls(
+            WindowApi.HasMonitorAt(left - 1, cursorY) ? left : null,
+            WindowApi.HasMonitorAt(right + 1, cursorY) ? right : null,
+            _monitor.Y, _monitor.Y + _monitor.Height);
+    }
+
     private void OnWindowDragEnded(WindowDrag drag)
     {
+        CursorFence.LowerWalls();
         var armed = _state == State.Attract && _capture ? _armed : null;
         var edge = _edgeCell;
         ClearEdge();
@@ -1069,19 +1100,69 @@ public partial class IslandWindow : Window
         int rows = Math.Min(items.Count, 4);
         _downloadsHeight = 28 + rows * 40 + 8;
 
-        // Closed chip text: percent for a single known-size download, otherwise a count.
+        // Closed chip: a progress line + percent when the sizes are known; otherwise the line slides
+        // back and forth and the text shows how much came in so far (or the count, for several).
         var active = items.Where(i => !i.Complete).ToList();
-        if (active.Count == 1 && active[0].Fraction is { } f)
+        double? fraction = active.Count > 0 && active.All(i => i.Total is > 0)
+            ? Math.Clamp((double)active.Sum(i => i.Received) / active.Sum(i => i.Total!.Value), 0, 1)
+            : null;
+        if (fraction is { } f)
             ClosedDownloadText.Text = $"{(int)(f * 100)}%";
+        else if (active.Count == 1)
+            ClosedDownloadText.Text = DownloadWatcher.FormatBytes(active[0].Received);
         else if (active.Count > 0)
             ClosedDownloadText.Text = active.Count.ToString(CultureInfo.CurrentCulture);
         else
             ClosedDownloadText.Text = "";
+        UpdateClosedDownloadBar(active.Count > 0 ? fraction : 0);
 
         DownloadsCount.Text = items.Count == 1 ? "1 file" : $"{items.Count} files";
 
         DownloadsPanel.Children.Clear();
         foreach (var item in items) DownloadsPanel.Children.Add(CreateDownloadRow(item));
+    }
+
+    private bool _downloadBarSliding;
+
+    /// <param name="fraction">0..1, or null when the total isn't known (the line slides instead).</param>
+    private void UpdateClosedDownloadBar(double? fraction)
+    {
+        double track = ClosedDownload.Width - ClosedDownloadTrack.Margin.Left - ClosedDownloadTrack.Margin.Right;
+        bool calm = GameMode.Active;
+        if (fraction is { } f)
+        {
+            if (_downloadBarSliding)
+            {
+                _downloadBarSliding = false;
+                ClosedDownloadFillT.BeginAnimation(TranslateTransform.XProperty, null);
+                ClosedDownloadFillT.X = 0;
+            }
+            double width = Math.Round(track * f, 1);
+            if (calm || !IsLoaded) { ClosedDownloadFill.BeginAnimation(WidthProperty, null); ClosedDownloadFill.Width = width; }
+            else ClosedDownloadFill.BeginAnimation(WidthProperty, new DoubleAnimation(width, TimeSpan.FromMilliseconds(450))
+                { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
+            return;
+        }
+
+        if (_downloadBarSliding && !calm) return;
+        double seg = Math.Round(track * 0.3);
+        ClosedDownloadFill.BeginAnimation(WidthProperty, null);
+        ClosedDownloadFill.Width = seg;
+        if (calm)
+        {
+            // Games: no per-frame work, just a still segment.
+            _downloadBarSliding = false;
+            ClosedDownloadFillT.BeginAnimation(TranslateTransform.XProperty, null);
+            ClosedDownloadFillT.X = (track - seg) / 2;
+            return;
+        }
+        _downloadBarSliding = true;
+        ClosedDownloadFillT.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, track - seg, TimeSpan.FromMilliseconds(900))
+        {
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever,
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        });
     }
 
     private FrameworkElement CreateDownloadRow(DownloadItem item)
@@ -1720,6 +1801,7 @@ public partial class IslandWindow : Window
     private void OnGameModeChanged()
     {
         Watchdog();
+        RebuildDownloads();
         ApplyState(animate: false);
     }
 
@@ -1734,6 +1816,10 @@ public partial class IslandWindow : Window
         {
             if (IsVisible) Hide();
         }
+
+        // Full-screen apps ignore the reserved band anyway; only give it back when the user hides the island.
+        if (_userHidden) _edge.Release();
+        else ReserveTop();
     }
 
     // ---------------------------------------------------------------- input
