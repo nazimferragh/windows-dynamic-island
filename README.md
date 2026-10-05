@@ -2,27 +2,34 @@
 
 A Dynamic Island for Windows that sits at the top of your screen and looks like it came with the OS. It stays small until something is going on, then grows to show it.
 
-> **Status:** early preview (v0.3). The base and the black hole work; more features that go further than Apple's island are coming.
+> **Status:** preview (v0.8). Works on Windows 10 (2004 and later) and Windows 11.
 
-## What it does today
+## What it does
 
-- **macOS-style notch** at the top-center of **every monitor**. It's attached to the top edge, with flared top corners and rounded bottom corners, and each one is sized for its monitor's scaling.
-- **Spring animations.** The notch grows and shrinks with a small bounce. Content follows it in with a soft blur, fade and scale.
-- **Behaves like part of Windows.** It always starts with Windows and has no Quit button (the tray menu only hides it). It restarts itself after a crash, never takes focus, and doesn't show in Alt+Tab or the taskbar.
-- **Now Playing from any app.** It reads the Windows media controls, so it works with Spotify, YouTube in any browser, Media Player, VLC and others.
-  - Closed: album art on the left and animated bars on the right, tinted with a color taken from the artwork.
-  - Sneak peek: when a new song starts, the notch drops down briefly to show the title and artist.
-  - Hover or click to open: large artwork, title, artist, a progress bar, and filled previous / play-pause / next controls.
-- **Black hole for your windows.** Drag any window by its title bar toward the notch and it starts to glow. Hold it over the notch until it says "Release to absorb", then let go, and the window is pulled inside. It disappears from the screen, the taskbar and Alt+Tab, but the app keeps running. You can also press **Ctrl+Alt+Z** to throw the active window in.
-  - Each virtual desktop has its own black hole: a window thrown in on Desktop 2 only shows up in Desktop 2's island.
-  - Hover the island to see the absorbed windows as cards. **Click** a card to bring its window back where it was, or **drag the card out** to put the window wherever you drop it.
-  - Safety net: absorbed windows come back if the island exits or crashes, and any window left hidden by an earlier run is restored at startup.
-- **Search & play, inside the island.** Open the island and hit **Search & play**: a panel drops down under the notch with an embedded YouTube. Type a song, pick it, and it plays right there — no browser tab. Tuck the panel away and the music keeps going, with the island showing it like any other track. (Uses the WebView2 runtime, which ships with Windows 10/11; it plays through YouTube's official player.)
-- **Week calendar** with today highlighted, and **battery** status on laptops.
-- **A menu bar like the Mac's.** A thin strip at the top of each screen is reserved, the same way the taskbar reserves its space, so maximized apps sit below the island instead of under it. While an app is maximized, the strip turns black and the notch blends into it.
-- **On every virtual desktop**, and it **hides on a monitor while an app is fullscreen on it** (videos, games, presentations).
-- **Sets up the PC by itself.** On first run it turns off Windows 11's drag-to-top "snap layouts" bar, which drops down right where the island is, and restarts Explorer once (a few seconds) so the change takes effect. Snap layouts still work from the maximize button and Win+Z. If Explorer restarts later for any reason, the island reserves its top strip again automatically.
-- **Windows 10 (2004 and later) and Windows 11.** A GitHub Actions smoke test installs and runs it on the Windows 10 (Server 2022) and Windows 11 (Server 2025) code bases.
+- **A Mac-style notch on every monitor**, always centered at the top, sized for each monitor's scaling, with spring animations. It never takes focus and stays out of Alt+Tab and the taskbar.
+- **Nothing sits under it, like on a Mac.** A thin band at the top of each screen is kept free (the way the taskbar keeps its space), so maximized apps start just below the island. While an app is maximized, the band takes the color of the app's own top edge, so the app seems to reach up to the island; over the desktop you see your wallpaper. Full-screen games and videos still use the whole screen, with the island floating on top.
+- **Now playing from any app** (Spotify, YouTube in any browser, Media Player, VLC…): artwork and moving bars when closed, full controls, progress and volume when open. It always shows the song's real thumbnail, never a browser logo.
+- **Search & play:** an embedded YouTube panel under the notch. Search, play, and tuck it away while the music keeps going.
+- **Notifications in the island** instead of Windows' pop-ups, and **calls / voice recordings** (which app has the microphone, with a timer and a mute button).
+- **Downloads:** a progress line in the closed island (with the percent when the size is known), and the list of recent files when open.
+- **Wi‑Fi and Bluetooth** controlled from inside the island: join, disconnect, forget, pair.
+- **Black hole for your windows:** drag a window onto the notch and let go, and it's tucked inside (hidden from the screen, taskbar and Alt+Tab while the app keeps running). Click it in the island to bring it back. Each virtual desktop has its own.
+- **Snap to edges and corners:** drag a window to a side for half the screen, into a corner for a quarter, or to the top beside the island for full screen. Edges between two monitors work too: push on through to move the window to the other screen.
+- **Pinned apps** in the island, rearranged like on an iPhone.
+- **Always running:** starts at sign-in, comes back after a crash or a Task Manager kill, and "Quit" in the tray only lasts until the next restart.
+- **Settings** in the Windows 11 style, following your accent color and light/dark mode.
+
+## Light on your PC
+
+It runs all day, often next to games, so it's built to stay out of the way:
+
+- **Game mode:** when a full-screen game or video is in front, nothing animates, background checks slow down to every few seconds, and the island drops to below-normal priority, so the game always gets the CPU first.
+- **No always-on mouse hook:** the low-level mouse hook used while dragging windows is only installed during the drag.
+- **Small windows:** while closed, each island's window is just around the notch, so the music bars redraw ~12× fewer pixels.
+- **The YouTube panel starts only when you open it**, sleeps when hidden, and is closed for real after a few minutes unused.
+- **Event-driven** wherever Windows allows it (microphone use, window changes) instead of constant polling.
+
+Measured on a 3-monitor PC (Windows 11, v0.8.0): about 1% of one CPU core in normal use, about 0.3% in game mode, around 200 MB of RAM, no GPU time of its own, and no disk writes while running.
 
 ## Install
 
@@ -49,7 +56,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 ## Privacy
 
-This program does not send any information to other networked systems. It has no network features at all. Everything it knows (the media that's playing, which windows are in the black hole, its log file in `%LOCALAPPDATA%\DynamicIsland`) stays on your PC.
+The island has no accounts, analytics or tracking. It only goes online for YouTube: when the playing app doesn't provide a real thumbnail, it searches YouTube for the song's title to get one, and for the Search & play panel, an embedded YouTube page you use like a browser (sign-in there is with Google, directly). Everything else it knows (the media that's playing, which windows are in the black hole, notifications, its log file in `%LOCALAPPDATA%\DynamicIsland`) stays on your PC.
 
 ## License
 
@@ -77,11 +84,8 @@ scripts/make-icon.ps1       regenerates assets/icon.ico
 
 ## Roadmap ideas
 
-- Notifications (Windows toasts) shown in the island
 - Timers, alarms and a Pomodoro timer
 - Volume and brightness indicators that replace the Windows flyouts
 - Calendar: next meeting, with a one-click join
-- Downloads, file copy progress, battery and charging
 - Drag-and-drop file shelf
-- Themes and a settings UI
 - Auto-update

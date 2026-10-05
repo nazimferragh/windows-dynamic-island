@@ -16,7 +16,9 @@ public sealed record MicUse(string Key, string AppName, bool IsCall, DateTime Si
 /// <summary>
 /// Which app is using the microphone right now (a call, a voice note, a recording), read from the
 /// same per-app record Windows uses for its own microphone indicator. A call app, or any app also
-/// using the camera, counts as a call. Polls once a second; raises <see cref="Changed"/> on the UI thread.
+/// using the camera, counts as a call. Re-reads when Windows changes those registry keys (a
+/// background thread waits on them, so it costs nothing while idle) and every 30 s as a safety
+/// net; raises <see cref="Changed"/> on the UI thread.
 /// Windows 10 (1903+) and 11.
 /// </summary>
 public sealed class MicActivity
@@ -32,7 +34,12 @@ public sealed class MicActivity
         "slack", "webex", "viber", "facetime", "googlemeet", "line", "wechat",
     };
 
-    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
+    private bool _pollQueued;
+
+    [DllImport("advapi32.dll")]
+    private static extern int RegNotifyChangeKeyValue(Microsoft.Win32.SafeHandles.SafeRegistryHandle key, bool subtree, uint filter, Microsoft.Win32.SafeHandles.SafeWaitHandle evt, bool async);
     private readonly Dictionary<string, string> _names = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The app to show (a call wins over other microphone use), or null.</summary>
@@ -43,9 +50,43 @@ public sealed class MicActivity
     private MicActivity()
     {
         _poll.Tick += (_, _) => Poll();
-        Services.GameMode.Tune(_poll, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
+        Services.GameMode.Tune(_poll, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60));
         _poll.Start();
         Poll();
+        new System.Threading.Thread(WatchRegistry) { IsBackground = true, Name = "MicWatch", Priority = System.Threading.ThreadPriority.BelowNormal }.Start();
+    }
+
+    /// <summary>Sleeps until Windows writes to the microphone/camera usage keys, then asks for a re-read.</summary>
+    private void WatchRegistry()
+    {
+        try
+        {
+            using var mic = Registry.CurrentUser.OpenSubKey(Store + "microphone");
+            using var cam = Registry.CurrentUser.OpenSubKey(Store + "webcam");
+            if (mic == null) return;
+            using var micChanged = new System.Threading.AutoResetEvent(false);
+            using var camChanged = new System.Threading.AutoResetEvent(false);
+            const uint filter = 0x1 | 0x4; // subkey added/removed, value changed
+            if (RegNotifyChangeKeyValue(mic.Handle, true, filter, micChanged.SafeWaitHandle, true) != 0) return;
+            if (cam != null) RegNotifyChangeKeyValue(cam.Handle, true, filter, camChanged.SafeWaitHandle, true);
+            var events = cam != null ? new System.Threading.WaitHandle[] { micChanged, camChanged } : new System.Threading.WaitHandle[] { micChanged };
+            while (true)
+            {
+                // Each registration fires once; re-arm only the one that fired.
+                if (System.Threading.WaitHandle.WaitAny(events) == 0)
+                    RegNotifyChangeKeyValue(mic.Handle, true, filter, micChanged.SafeWaitHandle, true);
+                else
+                    RegNotifyChangeKeyValue(cam!.Handle, true, filter, camChanged.SafeWaitHandle, true);
+                System.Threading.Thread.Sleep(150); // Windows writes start/stop in a few steps
+                if (_pollQueued) continue;
+                _pollQueued = true;
+                _dispatcher.InvokeAsync(() => { _pollQueued = false; Poll(); });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Can't watch microphone use; checking every 30 s instead", ex);
+        }
     }
 
     private void Poll()
@@ -56,11 +97,7 @@ public sealed class MicActivity
             var mic = InUse("microphone");
             // Windows sometimes never records the "stopped" time (an app that crashed or was killed):
             // only trust entries whose app is actually running.
-            if (mic.Count > 0)
-            {
-                var running = RunningApps();
-                mic = mic.Where(m => m.ExePath != null ? running.Paths.Contains(m.ExePath) : m.PackageFamily != null && running.Families.Contains(m.PackageFamily)).ToList();
-            }
+            if (mic.Count > 0) mic = mic.Where(IsRunningCached).ToList();
             if (mic.Count > 0)
             {
                 var camera = InUse("webcam").Select(c => c.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -83,6 +120,49 @@ public sealed class MicActivity
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr p, int flags, StringBuilder name, ref int size);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern int GetPackageFamilyName(IntPtr p, ref int length, StringBuilder? name);
+
+    // Whether an entry's app is running, remembered per entry: Windows keeps stale "in use" entries
+    // for days, and checking every process each second (OpenProcess on hundreds of them) kept the
+    // UI thread busy in the kernel. A verdict is redone when the entry changes (new start time),
+    // after 5 s for a running app (it may have crashed), after 60 s for a stale one.
+    private readonly Dictionary<string, (DateTime Since, bool Running, DateTime CheckedAt)> _running = new();
+
+    private bool IsRunningCached(MicUse m)
+    {
+        var now = DateTime.UtcNow;
+        if (_running.TryGetValue(m.Key, out var v) && v.Since == m.Since &&
+            now - v.CheckedAt < (v.Running ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(60)))
+            return v.Running;
+        bool running = m.ExePath != null ? IsExeRunning(m.ExePath)
+            : m.PackageFamily != null && RunningApps().Families.Contains(m.PackageFamily);
+        _running[m.Key] = (m.Since, running, now);
+        return running;
+    }
+
+    /// <summary>Only opens the processes with that exe's name, not every process.</summary>
+    private static bool IsExeRunning(string exePath)
+    {
+        foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(exePath)))
+        {
+            using (p)
+            {
+                var h = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, p.Id);
+                if (h == IntPtr.Zero) continue;
+                try
+                {
+                    var sb = new StringBuilder(1024);
+                    int size = sb.Capacity;
+                    if (QueryFullProcessImageName(h, 0, sb, ref size) && string.Equals(sb.ToString(), exePath, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                finally
+                {
+                    CloseHandle(h);
+                }
+            }
+        }
+        return false;
+    }
 
     /// <summary>Exe paths and Store package families of everything running.</summary>
     private static (HashSet<string> Paths, HashSet<string> Families) RunningApps()

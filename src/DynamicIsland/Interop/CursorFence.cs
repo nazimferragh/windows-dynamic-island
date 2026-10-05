@@ -8,8 +8,9 @@ namespace DynamicIsland.Interop;
 /// <summary>
 /// Keeps the mouse below a given line on one monitor. ClipCursor can't do this during a window drag
 /// (Windows' move loop resets the clip), so a low-level mouse hook stops the pointer at the line
-/// instead. The hook lives on its own thread so a busy UI can never make the mouse stutter, and it
-/// does nothing unless a fence is up.
+/// instead. The hook lives on its own thread so a busy UI can never make the mouse stutter, and it's
+/// only installed while a window is being dragged: a low-level hook sees every mouse move on the
+/// PC (1000 a second with a gaming mouse), which costs CPU and adds a step to every move in games.
 /// </summary>
 public static class CursorFence
 {
@@ -35,6 +36,20 @@ public static class CursorFence
     [DllImport("user32.dll")]
     private static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
 
+    [DllImport("user32.dll")]
+    private static extern bool PeekMessage(out MSG msg, IntPtr hwnd, uint min, uint max, uint remove);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostThreadMessage(uint threadId, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    private const uint WM_APP_HOOK = 0x8001, WM_APP_UNHOOK = 0x8002;
+
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetModuleHandle(string? name);
 
@@ -54,6 +69,9 @@ public static class CursorFence
     private static readonly HookProc Proc = OnMouse; // kept alive for the hook's lifetime
     private static Thread? _thread;
     private static IntPtr _hook;
+    private static volatile uint _threadId;
+    private static readonly ManualResetEventSlim Ready = new();
+    private static bool _engaged; // UI thread only
 
     // The fence: [left, right) horizontally, nothing above minY. Read on the hook thread.
     private static volatile bool _active;
@@ -62,7 +80,7 @@ public static class CursorFence
     /// <summary>Stops the pointer from going above <paramref name="minY"/> between left and right (physical pixels).</summary>
     public static void Raise(int left, int right, int minY)
     {
-        EnsureHook();
+        Engage();
         Interlocked.Exchange(ref _left, left);
         Interlocked.Exchange(ref _right, right);
         Interlocked.Exchange(ref _minY, minY);
@@ -86,7 +104,7 @@ public static class CursorFence
     /// </summary>
     public static void RaiseWalls(int? left, int? right, int top, int bottom)
     {
-        EnsureHook();
+        Engage();
         int l = left ?? int.MinValue, r = right ?? int.MaxValue;
         if (_walls && l == _wallLeft && r == _wallRight && top == _wallTop && bottom == _wallBottom) return;
         Interlocked.Exchange(ref _wallLeft, l);
@@ -99,24 +117,54 @@ public static class CursorFence
 
     public static void LowerWalls() => _walls = false;
 
-    /// <summary>Installs the (idle) hook up front so the very first drag is already covered.</summary>
-    public static void Start() => EnsureHook();
+    /// <summary>Starts the (sleeping) hook thread up front, so engaging at a drag's start is instant.</summary>
+    public static void Start() => EnsureThread();
 
-    private static void EnsureHook()
+    /// <summary>Installs the hook (a window drag started). Cheap; safe to call repeatedly.</summary>
+    public static void Engage()
+    {
+        if (_engaged) return;
+        EnsureThread();
+        _engaged = PostThreadMessage(_threadId, WM_APP_HOOK, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    /// <summary>Removes the hook (the drag ended); every fence and wall comes down with it.</summary>
+    public static void Disengage()
+    {
+        _active = false;
+        _walls = false;
+        if (!_engaged) return;
+        _engaged = false;
+        PostThreadMessage(_threadId, WM_APP_UNHOOK, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static void EnsureThread()
     {
         if (_thread != null) return;
         _thread = new Thread(() =>
         {
-            _hook = SetWindowsHookEx(WH_MOUSE_LL, Proc, GetModuleHandle(null), 0);
-            if (_hook == IntPtr.Zero)
+            PeekMessage(out _, IntPtr.Zero, 0, 0, 0); // creates this thread's message queue
+            _threadId = GetCurrentThreadId();
+            Ready.Set();
+            // Asleep in GetMessage between drags: no CPU at all.
+            while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
             {
-                Log.Error($"Mouse hook failed ({Marshal.GetLastWin32Error()}); Windows' maximize preview may show over the island");
-                return;
+                if (msg.Message == WM_APP_HOOK && _hook == IntPtr.Zero)
+                {
+                    _hook = SetWindowsHookEx(WH_MOUSE_LL, Proc, GetModuleHandle(null), 0);
+                    if (_hook == IntPtr.Zero)
+                        Log.Error($"Mouse hook failed ({Marshal.GetLastWin32Error()}); Windows' maximize preview may show over the island");
+                }
+                else if (msg.Message == WM_APP_UNHOOK && _hook != IntPtr.Zero)
+                {
+                    UnhookWindowsHookEx(_hook);
+                    _hook = IntPtr.Zero;
+                }
             }
-            while (GetMessage(out _, IntPtr.Zero, 0, 0) > 0) { }
         })
         { IsBackground = true, Name = "CursorFence", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
+        Ready.Wait(2000);
     }
 
     private static IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam)

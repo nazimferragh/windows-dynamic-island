@@ -109,6 +109,8 @@ internal sealed class MediaBrowserWindow : Window
             }
             core.MemoryUsageTargetLevel = Microsoft.Web.WebView2.Core.CoreWebView2MemoryUsageTargetLevel.Low;
             await core.TrySuspendAsync();
+            _release.Stop();
+            _release.Start();
         }
         catch (Exception ex)
         {
@@ -117,6 +119,29 @@ internal sealed class MediaBrowserWindow : Window
     }
 
     private bool _sleepWatch;
+
+    // Even asleep, the embedded browser keeps ~300–400 MB and 6–7 processes. Unused for a few
+    // minutes, the panel is closed for real (its processes exit) and comes back on the same page
+    // the next time it's opened (~1 s to start).
+    private static readonly TimeSpan ReleaseAfter = TimeSpan.FromMinutes(3);
+    private readonly DispatcherTimer _release = new() { Interval = ReleaseAfter };
+    private static string? _resumeUrl;
+    private int _activeDownloads;
+    private Action? _onSettingsChanged;
+
+    private void ReleaseIfIdle()
+    {
+        _release.Stop();
+        if (IsVisible || _instance != this || _activeDownloads > 0) return;
+        try
+        {
+            if (_ready && _web.CoreWebView2.IsDocumentPlayingAudio) return;
+            if (_ready) _resumeUrl = _web.CoreWebView2.Source;
+        }
+        catch { }
+        Log.Info("YouTube panel unused for a while; closed to free its memory");
+        ShutDown();
+    }
 
     public static void Toggle(Int32Rect monitor)
     {
@@ -162,13 +187,23 @@ internal sealed class MediaBrowserWindow : Window
 
     public static void ShutDown()
     {
-        _instance?.Close();
+        var panel = _instance;
         _instance = null;
+        if (panel == null) return;
+        panel._release.Stop();
+        if (panel._onSettingsChanged != null) AppSettings.Changed -= panel._onSettingsChanged;
+        panel.Close();
+        panel._web.Dispose();
     }
 
     private MediaBrowserWindow()
     {
-        IsVisibleChanged += (_, _) => _ = SleepWhenHiddenAsync();
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) _release.Stop();
+            _ = SleepWhenHiddenAsync();
+        };
+        _release.Tick += (_, _) => ReleaseIfIdle();
         Title = "Search & play";
         Width = _dipWidth;
         Height = _dipHeight;
@@ -535,7 +570,8 @@ internal sealed class MediaBrowserWindow : Window
                 if (!AppSettings.Current.BlockYouTubeAds) return;
                 e.Response = _web.CoreWebView2.Environment.CreateWebResourceResponse(null, 403, "Blocked", "");
             };
-            AppSettings.Changed += () => Dispatcher.InvokeAsync(() => _ = ApplyAdBlockAsync(reload: true));
+            _onSettingsChanged = () => Dispatcher.InvokeAsync(() => _ = ApplyAdBlockAsync(reload: true));
+            AppSettings.Changed += _onSettingsChanged;
             _web.CoreWebView2.NavigationCompleted += async (_, _) =>
             {
                 try { await _web.CoreWebView2.ExecuteScriptAsync(HideMastheadScript); } catch { }
@@ -568,11 +604,18 @@ internal sealed class MediaBrowserWindow : Window
                 void Update(bool complete) =>
                     DownloadWatcher.Instance?.Report(id, name, (long)op.BytesReceived, (long)(op.TotalBytesToReceive ?? 0), complete, op.ResultFilePath);
                 Update(false);
+                _activeDownloads++;
                 op.BytesReceivedChanged += (_, _) => Update(false);
-                op.StateChanged += (_, _) => Update(op.State == CoreWebView2DownloadState.Completed);
+                op.StateChanged += (_, _) =>
+                {
+                    Update(op.State == CoreWebView2DownloadState.Completed);
+                    if (op.State != CoreWebView2DownloadState.InProgress) _activeDownloads = Math.Max(0, _activeDownloads - 1);
+                };
             };
 
-            _web.CoreWebView2.Navigate(Home);
+            // Back on the page it was on before it was closed to save memory, else YouTube's home.
+            _web.CoreWebView2.Navigate(_resumeUrl ?? Home);
+            _resumeUrl = null;
             _ready = true;
         }
         catch (Exception ex)

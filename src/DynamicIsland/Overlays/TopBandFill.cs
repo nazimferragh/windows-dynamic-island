@@ -14,14 +14,18 @@ namespace DynamicIsland.Overlays;
 /// Fills the reserved band beside the island with the color of the maximized app's own top edge
 /// (owner's pick "F" in the Top Band Lab preview, https://claude.ai/artifact/SHDEGvLL7DyyMBUWB35ZpD),
 /// so the app seems to reach up to the island. Over the desktop it's hidden and the wallpaper shows.
-/// Click-through, never focused, stays below the island. Cheap: one 1-pixel-high screen read
-/// every ~0.4 s and only while a maximized window is on this screen; nothing at all in game mode.
+/// Click-through, never focused, stays below the island. Cheap: a quick window check every 0.7 s;
+/// the screen itself is only read (one pixel row) when the window in front changed, or every 4 s
+/// while a maximized window is on this screen. Nothing at all in game mode.
 /// </summary>
 internal sealed class TopBandFill : Window
 {
     private readonly Int32Rect _monitor;
     private readonly SolidColorBrush _fill = new(Colors.Black);
-    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromMilliseconds(400) };
+    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromMilliseconds(700) };
+    private static readonly TimeSpan Resample = TimeSpan.FromSeconds(4);
+    private (IntPtr Maximized, IntPtr Front) _seen;
+    private DateTime _sampledAt;
     private readonly Func<(int Top, int Bottom)> _band;
     private IntPtr _hwnd;
     private bool _shown;
@@ -53,7 +57,7 @@ internal sealed class TopBandFill : Window
             Place();
         };
         _poll.Tick += (_, _) => Update();
-        GameMode.Tune(_poll, TimeSpan.FromMilliseconds(400), TimeSpan.FromSeconds(10));
+        GameMode.Tune(_poll, TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(10));
         Closed += (_, _) => _poll.Stop();
     }
 
@@ -93,8 +97,19 @@ internal sealed class TopBandFill : Window
     private void Update()
     {
         // In a full-screen game the band is ignored and the island floats over the game.
-        bool want = !GameMode.IsOn(_monitor) && WindowApi.HasMaximizedWindowOn(MonitorRect);
-        if (want && SampleAppTop() is { } color) SetColor(color);
+        var maximized = GameMode.IsOn(_monitor) ? IntPtr.Zero : WindowApi.MaximizedWindowOn(MonitorRect);
+        bool want = maximized != IntPtr.Zero;
+        if (want)
+        {
+            var seen = (maximized, WindowApi.GetForegroundWindow());
+            if (seen != _seen || !_shown || DateTime.UtcNow - _sampledAt > Resample)
+            {
+                _seen = seen;
+                _sampledAt = DateTime.UtcNow;
+                if (SampleAppTop() is { } color) SetColor(color);
+            }
+        }
+        else _seen = default;
         SetShown(want);
     }
 

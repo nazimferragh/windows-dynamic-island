@@ -101,6 +101,20 @@ internal static class NativeMethods
         return false;
     }
 
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    /// <summary>
+    /// True when some visible window is stacked above this one. Lets the watchdog skip re-raising
+    /// (a z-order change every second, per island) when the island is already on top.
+    /// </summary>
+    public static bool IsBelowVisibleWindow(IntPtr hwnd)
+    {
+        var above = GetWindow(hwnd, 3 /* GW_HWNDPREV */);
+        for (int i = 0; i < 512 && above != IntPtr.Zero; i++, above = GetWindow(above, 3))
+            if (IsWindowVisible(above)) return true;
+        return false;
+    }
+
     /// <summary>Exclusive-fullscreen games and presentation mode (affects every monitor).</summary>
     public static bool IsExclusiveFullscreenOrPresenting()
     {

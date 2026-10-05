@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -96,18 +97,38 @@ public static class WindowApi
     /// True when a maximized window is shown on this monitor (on the current virtual desktop:
     /// windows on other desktops are "cloaked").
     /// </summary>
-    public static bool HasMaximizedWindowOn(RECT monitor)
+    public static bool HasMaximizedWindowOn(RECT monitor) => MaximizedWindowOn(monitor) != IntPtr.Zero;
+
+    // One scan of the window list serves every monitor's strip for a moment, instead of one each.
+    private static List<(IntPtr Hwnd, RECT Rect)>? _maximized;
+    private static long _maximizedAt;
+
+    /// <summary>The front-most maximized window on this monitor (current virtual desktop), or zero.</summary>
+    public static IntPtr MaximizedWindowOn(RECT monitor)
     {
-        bool found = false;
+        long now = Environment.TickCount64;
+        if (_maximized == null || now - _maximizedAt > 500)
+        {
+            _maximized = ScanMaximized();
+            _maximizedAt = now;
+        }
+        foreach (var (hwnd, r) in _maximized)
+            if (monitor.Contains(r.Left + r.Width / 2, r.Top + r.Height / 2)) return hwnd;
+        return IntPtr.Zero;
+    }
+
+    /// <summary>Visible, maximized, uncloaked windows of other processes, front to back.</summary>
+    private static List<(IntPtr, RECT)> ScanMaximized()
+    {
+        var found = new List<(IntPtr, RECT)>();
         uint self = (uint)Environment.ProcessId;
         EnumWindows((hwnd, _) =>
         {
             if (!IsWindowVisible(hwnd) || !IsZoomed(hwnd) || IsIconic(hwnd)) return true;
             if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
             if (GetProcessId(hwnd) == self || !GetWindowRect(hwnd, out var r)) return true;
-            if (!monitor.Contains(r.Left + r.Width / 2, r.Top + r.Height / 2)) return true;
-            found = true;
-            return false;
+            found.Add((hwnd, r));
+            return true;
         }, IntPtr.Zero);
         return found;
     }

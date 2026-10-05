@@ -28,11 +28,15 @@ Write-Host "Dynamic Island $Version ($Stage)" -ForegroundColor Cyan
 if ($Stage -in 'All', 'Publish') {
     if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
 
-    # Self-contained single exe: users don't need to install .NET.
+    # Self-contained single exe: users don't need to install .NET. Not compressed inside: a
+    # compressed bundle unpacks every assembly into private RAM at start, an uncompressed one is
+    # mapped straight from the file (shared, pageable). The installer compresses it anyway, so the
+    # download stays the same size. ReadyToRun: precompiled, so less JIT work (CPU) at start.
     dotnet publish $project -c Release -r win-x64 --self-contained true `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
-        -p:EnableCompressionInSingleFile=true `
+        -p:EnableCompressionInSingleFile=false `
+        -p:PublishReadyToRun=true `
         -p:DebugType=none `
         -p:Version=$Version `
         -o $publish

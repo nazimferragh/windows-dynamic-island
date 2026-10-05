@@ -164,6 +164,7 @@ public partial class IslandWindow : Window
         _tickTimer.Tick += (_, _) => OnTick();
         _watchdogTimer.Tick += (_, _) => Watchdog();
         GameMode.Tune(_watchdogTimer, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
+        GameMode.Tune(_tickTimer, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(5));
         GameMode.Changed += OnGameModeChanged;
         Closed += (_, _) => GameMode.Changed -= OnGameModeChanged;
 
@@ -290,7 +291,6 @@ public partial class IslandWindow : Window
         PositionOnMonitor();
         ReserveTop();
         if (!_userHidden) _bandFill.Start();
-        _tickTimer.Start();
         _watchdogTimer.Start();
     }
 
@@ -364,6 +364,9 @@ public partial class IslandWindow : Window
         if (_state == state) return;
         _state = state;
         if (state != State.Open) ClosePanels(); // next time it opens on the player
+        // The progress bar, battery and volume only need refreshing while they're on screen.
+        if (state == State.Open) _tickTimer.Start();
+        else _tickTimer.Stop();
         ApplyState(animate: true);
     }
 
@@ -418,8 +421,40 @@ public partial class IslandWindow : Window
         return new Rect(_monitor.X + _monitor.Width / 2.0 - w / 2, _edge.Top, w, h);
     }
 
+    // ---------------------------------------------------------------- window size
+
+    // The window is a layered (per-pixel transparent) window: every redraw, e.g. each frame of the
+    // music bars, copies the whole window. So while the island is a small closed pill the window
+    // shrinks to just around it (~360×64 instead of 760×370, ~12× fewer pixels per frame) and
+    // grows back before anything bigger is shown.
+    private const double FullWidth = 760, FullHeight = 370, CompactWidth = 360, CompactHeight = 64;
+    private bool _compact;
+
+    private bool CompactAllowed => _state is State.Closed or State.Peek && _eating == 0;
+
+    private void GrowWindowIfNeeded()
+    {
+        if (_compact && !CompactAllowed) SetWindowSize(compact: false);
+    }
+
+    private void ShrinkWindowIfIdle()
+    {
+        if (!_compact && CompactAllowed && !_animating) SetWindowSize(compact: true);
+    }
+
+    private void SetWindowSize(bool compact)
+    {
+        _compact = compact;
+        Width = compact ? CompactWidth : FullWidth;
+        Height = compact ? CompactHeight : FullHeight;
+        PositionOnMonitor();
+        // The outline is drawn from the window's width; redraw it once the new size is laid out.
+        Dispatcher.BeginInvoke(RenderShape, DispatcherPriority.Loaded);
+    }
+
     private void ApplyState(bool animate)
     {
+        GrowWindowIfNeeded();
         bool hasMedia = _snapshot != null;
         bool closed = _state is State.Closed or State.Peek;
         var shape = CurrentSilhouette();
@@ -439,6 +474,7 @@ public partial class IslandWindow : Window
             _flare.Snap();
             _radius.Snap();
             RenderShape();
+            ShrinkWindowIfIdle();
         }
 
         Reveal(NotificationContent, _state == State.Notify, animate);
@@ -595,6 +631,7 @@ public partial class IslandWindow : Window
         {
             CompositionTarget.Rendering -= OnRendering;
             _animating = false;
+            ShrinkWindowIfIdle();
         }
     }
 
@@ -1690,7 +1727,6 @@ public partial class IslandWindow : Window
 
     private void OnTick()
     {
-        if (DateTime.Today != _calendarDate) UpdateCalendar();
         if (_state != State.Open) return;
         UpdateProgress();
         UpdateBattery();
@@ -1799,9 +1835,10 @@ public partial class IslandWindow : Window
         // Other always-on-top windows can end up above us; quietly reclaim the top spot. While a
         // game runs, only when the game really got above us: re-ordering topmost windows every
         // second can hitch its frames, a cheap z-order check can't.
-        if (IsVisible && _hwnd != IntPtr.Zero && (!GameMode.Active || NativeMethods.IsCoveredByForeground(_hwnd)))
+        if (IsVisible && _hwnd != IntPtr.Zero && (GameMode.Active ? NativeMethods.IsCoveredByForeground(_hwnd) : NativeMethods.IsBelowVisibleWindow(_hwnd)))
             NativeMethods.BringToTopmost(_hwnd);
         if (IsVisible) _edge.Refresh();
+        if (DateTime.Today != _calendarDate) UpdateCalendar();
         if (IsVisible) KeepCentered();
     }
 

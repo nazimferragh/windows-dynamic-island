@@ -65,7 +65,19 @@ The minimum is Windows 10 2004 (build 19041); see `MinVersion` in `installer/Dyn
   game really got above it, background checks slow to 4–30 s (register new timers with `GameMode.Tune`), and
   the process drops to below-normal priority. The hidden YouTube panel sleeps (`TrySuspendAsync`)
   unless it's playing audio. Never add always-running per-frame work; measured target in game
-  mode: well under 1% of one core.
+  mode: well under 1% of one core. Measured 2026-10-05 (v0.8.0, 3 monitors): ~1.2% normal, ~0.3% game
+  mode, ~200 MB RAM (was 3.5% / 711 MB). Keep it that way:
+  - The low-level mouse hook (`CursorFence`) is only installed during a window drag
+    (`Engage`/`Disengage` from `WindowDragWatcher`). Never install always-on LL hooks.
+  - Closed, the island window shrinks to ~360×64 (`SetWindowSize`): layered windows copy their whole
+    surface each frame. It must grow (`GrowWindowIfNeeded`) before anything larger shows.
+  - WinRT objects polled repeatedly must be fetched on a background (MTA) thread
+    (`NotificationService`): STA-bound ones are released through the UI thread and flood it.
+  - Prefer change notifications to polling (`MicActivity` waits on its registry keys); never
+    enumerate/OpenProcess every process on a timer.
+  - The YouTube panel (WebView2, ~400 MB) starts only when opened and is closed after 3 min unused.
+  - Single-file publish is uncompressed (mapped, not unpacked into private RAM) + ReadyToRun;
+    the installer compresses it.
 - **Feels native.** `WindowsTheme` reads the accent color (`UISettings`: the taskbar/Start accent,
   not the DWM title-bar one) and light/dark mode, live. `AppSettings` + `SettingsWindow` (Windows 11
   Settings look, Mica on 22621+, solid on Windows 10) control every feature, applied instantly.

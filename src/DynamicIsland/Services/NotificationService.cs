@@ -29,10 +29,12 @@ public sealed class NotificationInfo
 public sealed class NotificationService
 {
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
-    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromMilliseconds(1200) };
+    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromMilliseconds(1500) };
     private readonly HashSet<uint> _seen = new();
     private readonly List<NotificationInfo> _recent = new();
     private UserNotificationListener? _listener;
+    private UserNotificationListener? _bgListener;
+    private volatile bool _polling;
     private bool _first = true;
     private int _pollCount;
 
@@ -54,15 +56,21 @@ public sealed class NotificationService
             }
             // Only now that the island can read them is it safe to silence Windows' own pop-ups.
             if (AppSettings.Current.ShouldHideBanners) NotificationBanners.HideAll();
-            _poll.Tick += async (_, _) =>
+            // Polled on a background (MTA) thread with its own listener: objects fetched on the UI
+            // thread are tied to it, and every one of them (dozens per poll) then has to be released
+            // through a call back into the UI thread, which kept it waking up ~300 times a second.
+            _bgListener = await Task.Run(() => UserNotificationListener.Current);
+            _poll.Tick += (_, _) =>
             {
                 // Apps that start sending notifications later get their pop-ups turned off too.
                 if (++_pollCount % 10 == 0 && AppSettings.Current.ShouldHideBanners) NotificationBanners.HideAll();
-                await PollAsync();
+                if (_polling) return;
+                _polling = true;
+                _ = Task.Run(PollAsync).ContinueWith(_ => _polling = false);
             };
-            GameMode.Tune(_poll, TimeSpan.FromMilliseconds(1200), TimeSpan.FromSeconds(4));
+            GameMode.Tune(_poll, TimeSpan.FromMilliseconds(1500), TimeSpan.FromSeconds(4));
+            await Task.Run(PollAsync); // prime the "seen" set without animating existing ones
             _poll.Start();
-            await PollAsync(); // prime the "seen" set without animating existing ones
         }
         catch (Exception ex)
         {
@@ -72,11 +80,11 @@ public sealed class NotificationService
 
     private async Task PollAsync()
     {
-        if (_listener == null) return;
+        if (_bgListener == null) return;
         IReadOnlyList<UserNotification> notifications;
         try
         {
-            notifications = await _listener.GetNotificationsAsync(NotificationKinds.Toast);
+            notifications = await _bgListener.GetNotificationsAsync(NotificationKinds.Toast);
         }
         catch (Exception ex)
         {
@@ -101,9 +109,12 @@ public sealed class NotificationService
             var info = Parse(n);
             if (info == null) continue;
             info.Icon = await LoadIconAsync(n);
-            _recent.Insert(0, info);
-            if (_recent.Count > 20) _recent.RemoveAt(_recent.Count - 1);
-            _dispatcher.Invoke(() => Received?.Invoke(info));
+            _dispatcher.Invoke(() =>
+            {
+                _recent.Insert(0, info);
+                if (_recent.Count > 20) _recent.RemoveAt(_recent.Count - 1);
+                Received?.Invoke(info);
+            });
         }
     }
 

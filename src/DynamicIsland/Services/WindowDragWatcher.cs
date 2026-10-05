@@ -62,6 +62,7 @@ public sealed class WindowDragWatcher : IDisposable
             WindowApi.GetWindowRect(_hwnd, out _startRect);
             _startPlacement = WindowApi.GetPlacement(_hwnd);
             _resized = false;
+            CursorFence.Engage();
             _poll.Start();
         }
         else if (eventType == EVENT_SYSTEM_MOVESIZEEND && _hwnd != IntPtr.Zero)
@@ -72,6 +73,7 @@ public sealed class WindowDragWatcher : IDisposable
             var drag = Current();
             _hwnd = IntPtr.Zero;
             Ended?.Invoke(drag);
+            CursorFence.Disengage();
         }
     }
 

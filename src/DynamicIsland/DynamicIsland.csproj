@@ -16,7 +16,12 @@
     <!-- WFO0003 targets WinForms apps; this is a WPF app that only borrows NotifyIcon. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
 
-    <Version>0.7.0</Version>
+    <!-- Light on memory and CPU (it runs all day, next to games): workstation GC without the
+         background GC thread, no runtime profiling of hot code. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
+
+    <Version>0.8.0</Version>
     <Product>Dynamic Island</Product>
     <!-- Shown as the app name in Task Manager and Settings › Apps › Startup. -->
     <AssemblyTitle>Dynamic Island</AssemblyTitle>
